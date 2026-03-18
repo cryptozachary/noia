@@ -1,0 +1,20 @@
+{
+  "id": "run-2026-03-18T05-28-07-429Z-94c51e20",
+  "title": "innovation with modern game creation using ai",
+  "topic": "innovation with modern game creation using ai",
+  "createdAt": "2026-03-18T05:28:07.429Z",
+  "updatedAt": "2026-03-18T05:28:08.973Z",
+  "settings": {
+    "model": "gpt-4.1-mini"
+  },
+  "rounds": 8,
+  "roundMessages": [],
+  "finalReport": "",
+  "metadata": {
+    "status": "failed",
+    "medicalTopic": false,
+    "model": "gpt-4.1-mini",
+    "error": "OpenAI generation failed after retries.",
+    "failedAt": "2026-03-18T05:28:08.973Z"
+  }
+}

@@ -1,0 +1,292 @@
+:root {
+  --bg: #f2f5f7;
+  --card: #ffffff;
+  --text: #172026;
+  --muted: #5a6772;
+  --line: #d6dde3;
+  --accent: #0e5a7a;
+  --agent-synth: #1f7a5a;
+  --agent-skeptic: #97410e;
+  --agent-innov: #425bb3;
+  --agent-coord: #585068;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Trebuchet MS", sans-serif;
+  color: var(--text);
+  background: radial-gradient(circle at top right, #dceaf0 0%, var(--bg) 45%, #ecf1f5 100%);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: "Source Serif 4", "Georgia", serif;
+}
+
+p {
+  margin: 0;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(120deg, #f7fbff, #edf4f8);
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.badge {
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 300px minmax(500px, 1fr) 340px;
+  gap: 14px;
+  padding: 14px;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  min-height: 76vh;
+}
+
+.control-panel form,
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+label {
+  font-size: 0.88rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+input,
+textarea,
+select,
+button {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 10px;
+  font-size: 0.92rem;
+  font-family: inherit;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.4;
+}
+
+button {
+  cursor: pointer;
+  background: #f6fafc;
+}
+
+button:hover {
+  background: #eef6fb;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#startBtn,
+#saveMemoryBtn {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.hint-box {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.hint-box h3 {
+  margin-bottom: 6px;
+  font-size: 1rem;
+}
+
+.panel-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.actions button {
+  width: auto;
+}
+
+.run-meta {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbfd;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.run-meta.empty {
+  color: var(--muted);
+}
+
+.rounds {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.round-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fcfdfe;
+}
+
+.round-card header {
+  margin-bottom: 8px;
+}
+
+.coordinator-line {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.messages {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.msg-card {
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--agent-coord);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.msg-card.synth {
+  border-left-color: var(--agent-synth);
+}
+
+.msg-card.skeptic {
+  border-left-color: var(--agent-skeptic);
+}
+
+.msg-card.innov {
+  border-left-color: var(--agent-innov);
+}
+
+.msg-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.msg-time {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.msg-card pre {
+  white-space: pre-wrap;
+  font-size: 0.86rem;
+  margin: 8px 0 0;
+  line-height: 1.35;
+}
+
+.final-report {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fefefe;
+  padding: 12px;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+
+.hidden {
+  display: none;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 270px;
+  overflow-y: auto;
+}
+
+.history-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fafcfe;
+  cursor: pointer;
+}
+
+.history-item:hover {
+  border-color: #9fb8c7;
+}
+
+.history-item h4 {
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.history-item p {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 10px 0 6px;
+}
+
+@media (max-width: 1180px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    min-height: auto;
+  }
+}

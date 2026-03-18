@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scientific Agent Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Scientific Agent Lab</h1>
+        <p class="subtitle">Persistent multi-agent scientific debate and synthesis</p>
+      </div>
+      <div id="statusBadge" class="badge">Idle</div>
+    </header>
+
+    <main class="layout">
+      <section class="panel control-panel">
+        <h2>New Discussion</h2>
+        <form id="newDiscussionForm">
+          <label>Title (optional)</label>
+          <input id="titleInput" type="text" placeholder="e.g., Next-gen solid-state battery ideas" />
+
+          <label>Topic</label>
+          <textarea
+            id="topicInput"
+            rows="6"
+            required
+            placeholder="Describe the research topic, constraints, and goals..."
+          ></textarea>
+
+          <label>Rounds (2-8)</label>
+          <input id="roundsInput" type="number" min="2" max="8" value="4" />
+
+          <button id="startBtn" type="submit">Start Discussion</button>
+        </form>
+
+        <div class="hint-box">
+          <h3>Safety note</h3>
+          <p>
+            This lab is for exploratory research discussions. It does not produce clinical or medical advice.
+          </p>
+        </div>
+      </section>
+
+      <section class="panel run-panel">
+        <div class="panel-header-row">
+          <h2>Discussion Run</h2>
+          <div class="actions">
+            <button id="copyFinalBtn" disabled>Copy Final Report</button>
+            <button id="downloadFinalBtn" disabled>Export .md</button>
+          </div>
+        </div>
+        <div id="runMeta" class="run-meta empty">Start or load a session to view discussion rounds.</div>
+        <div id="roundsContainer" class="rounds"></div>
+        <article id="finalReport" class="final-report hidden"></article>
+      </section>
+
+      <section class="panel side-panel">
+        <h2>Session History</h2>
+        <div id="historyList" class="history-list"></div>
+
+        <hr />
+
+        <h2>Agent Memory</h2>
+        <label>Agent</label>
+        <select id="agentSelect"></select>
+        <textarea id="memoryEditor" rows="12"></textarea>
+        <button id="saveMemoryBtn">Save Memory</button>
+      </section>
+    </main>
+
+    <template id="roundTemplate">
+      <section class="round-card">
+        <header>
+          <h3></h3>
+          <p class="coordinator-line"></p>
+        </header>
+        <div class="messages"></div>
+      </section>
+    </template>
+
+    <template id="messageTemplate">
+      <article class="msg-card">
+        <header>
+          <h4></h4>
+          <span class="msg-time"></span>
+        </header>
+        <pre></pre>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

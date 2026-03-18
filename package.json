@@ -1,0 +1,26 @@
+{
+  "name": "scientific-agent-lab",
+  "version": "1.0.0",
+  "description": "Local-first multi-agent scientific discussion lab",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "verify": "node scripts/verify-mvp.js",
+    "seed": "node scripts/seed-sample-runs.js"
+  },
+  "keywords": [
+    "scientific-agents",
+    "research",
+    "multi-agent",
+    "openai",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "openai": "^4.82.0"
+  }
+}
