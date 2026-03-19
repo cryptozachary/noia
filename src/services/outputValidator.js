@@ -36,10 +36,22 @@ function validateDiscussionRequest(payload) {
     throw new AppError("Rounds must be an integer between 2 and 8.", 400);
   }
 
+  let stages = null;
+  if (Array.isArray(payload.stages) && payload.stages.length > 0) {
+    if (payload.stages.length !== rounds) {
+      throw new AppError(`Stages array length (${payload.stages.length}) must equal rounds (${rounds}).`, 400);
+    }
+    stages = payload.stages.map((s, i) => ({
+      name: (s.name || "").trim() || (i === rounds - 1 ? "final-synthesis" : `stage-${i + 1}`),
+      instruction: (s.instruction || "").trim()
+    }));
+  }
+
   return {
     topic,
     title: title || topic.slice(0, 72),
-    rounds
+    rounds,
+    stages
   };
 }
 

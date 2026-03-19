@@ -37,15 +37,22 @@ function buildStageInstruction(stage) {
   return "Respond with scientifically grounded analysis.";
 }
 
-function composeScientistPrompt({ agentId, topic, roundNumber, stage, peerMessages }) {
+function composeScientistPrompt({ agentId, topic, roundNumber, stage, peerMessages, researchContext = "", stageInstruction = "", userInput = "" }) {
   const agent = getAgent(agentId);
 
-  return [
+  const parts = [
     `Topic: ${topic}`,
     `Round: ${roundNumber}`,
     `Stage: ${stage}`,
     `Your role: ${agent ? agent.name : agentId}`,
-    buildStageInstruction(stage),
+    stageInstruction || buildStageInstruction(stage)
+  ];
+
+  if (researchContext) {
+    parts.push(researchContext);
+  }
+
+  parts.push(
     "Use the required structure exactly:",
     "Position:",
     "Supporting Reasoning:",
@@ -57,15 +64,21 @@ function composeScientistPrompt({ agentId, topic, roundNumber, stage, peerMessag
     "Keep content concise and specific.",
     "Peer context:",
     formatPeerMessages(peerMessages)
-  ].join("\n\n");
+  );
+
+  if (userInput) {
+    parts.push("User guidance for this round:", userInput);
+  }
+
+  return parts.join("\n\n");
 }
 
-function composeCoordinatorFinalPrompt({ topic, discussionText, isMedicalTopic }) {
+function composeCoordinatorFinalPrompt({ topic, discussionText, isMedicalTopic, researchContext = "" }) {
   const medicalInstruction = isMedicalTopic
     ? "Topic appears medical/health-related. Section 10 must explicitly say this is not medical advice."
     : "Section 10 should still include a research-only disclaimer.";
 
-  return [
+  const parts = [
     `Topic: ${topic}`,
     medicalInstruction,
     "Create a final synthesis with exactly these numbered sections and headings:",
@@ -80,9 +93,16 @@ function composeCoordinatorFinalPrompt({ topic, discussionText, isMedicalTopic }
     "9. Suggested Next Research Directions",
     "10. Safety Note / Disclaimer",
     "Be concrete, avoid overclaiming, and clearly distinguish established vs inferred vs speculative statements.",
-    "Discussion transcript:",
-    discussionText
-  ].join("\n\n");
+    "Complete ALL 10 sections in full. Do not truncate or abbreviate any section."
+  ];
+
+  if (researchContext) {
+    parts.push(researchContext);
+  }
+
+  parts.push("Discussion transcript:", discussionText);
+
+  return parts.join("\n\n");
 }
 
 module.exports = {

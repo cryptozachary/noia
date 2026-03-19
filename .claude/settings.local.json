@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Coding/noia -type d -not -path */node_modules* -not -path */.git* -not -path */data/*)",
+      "Bash(node -e \"require\\(''./src/orchestrator/runManager''\\)\")",
+      "Bash(node -e \"require\\(''./src/orchestrator/discussionOrchestrator''\\)\")",
+      "Bash(node -e \"require\\(''./src/storage/fileStore''\\)\")"
+    ]
+  }
+}

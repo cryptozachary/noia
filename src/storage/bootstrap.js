@@ -1,6 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const { config } = require("../config");
+const { reloadFromDisk } = require("../agents/registry");
 
 const AGENT_SEEDS = {
   "research-synthesizer": {
@@ -96,6 +97,11 @@ async function ensureBootstrap() {
     await createIfMissing(path.join(agentDir, "system.md"), seed.system + "\n");
     await createIfMissing(path.join(agentDir, "memory.md"), seed.memory + "\n");
   }
+
+  // Discover custom agents added to disk
+  const agentEntries = await fs.readdir(path.join(config.dataDir, "agents"), { withFileTypes: true });
+  const agentIds = agentEntries.filter((e) => e.isDirectory()).map((e) => e.name);
+  reloadFromDisk(agentIds);
 }
 
 async function createIfMissing(filePath, content) {

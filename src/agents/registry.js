@@ -1,4 +1,4 @@
-const AGENTS = [
+const DEFAULT_AGENTS = [
   {
     id: "research-synthesizer",
     name: "Research Synthesizer",
@@ -29,10 +29,59 @@ const AGENTS = [
   }
 ];
 
-const SCIENTIST_AGENT_IDS = AGENTS.filter((agent) => agent.id !== "coordinator").map((agent) => agent.id);
+let runtimeAgents = [...DEFAULT_AGENTS];
 
 function getAgent(agentId) {
-  return AGENTS.find((agent) => agent.id === agentId) || null;
+  return runtimeAgents.find((agent) => agent.id === agentId) || null;
 }
 
-module.exports = { AGENTS, SCIENTIST_AGENT_IDS, getAgent };
+function getScientistAgentIds() {
+  return runtimeAgents.filter((a) => a.id !== "coordinator").map((a) => a.id);
+}
+
+function addAgent(agentDef) {
+  const existing = runtimeAgents.findIndex((a) => a.id === agentDef.id);
+  if (existing >= 0) {
+    runtimeAgents[existing] = agentDef;
+  } else {
+    runtimeAgents.push(agentDef);
+  }
+}
+
+function removeAgent(agentId) {
+  runtimeAgents = runtimeAgents.filter((a) => a.id !== agentId);
+}
+
+function reloadFromDisk(agentIds) {
+  const knownIds = new Set(runtimeAgents.map((a) => a.id));
+  for (const id of agentIds) {
+    if (!knownIds.has(id)) {
+      const name = id
+        .split("-")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+      runtimeAgents.push({
+        id,
+        name,
+        shortName: name,
+        purpose: "Custom agent",
+        color: "var(--agent-custom)"
+      });
+    }
+  }
+}
+
+// Backward-compatible exports
+const AGENTS = runtimeAgents;
+const SCIENTIST_AGENT_IDS = null; // Deprecated: use getScientistAgentIds()
+
+module.exports = {
+  AGENTS,
+  SCIENTIST_AGENT_IDS,
+  DEFAULT_AGENTS,
+  getAgent,
+  getScientistAgentIds,
+  addAgent,
+  removeAgent,
+  reloadFromDisk
+};

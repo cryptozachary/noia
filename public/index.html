@@ -7,18 +7,20 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header class="topbar">
+    <a href="#newDiscussionForm" class="skip-link">Skip to main content</a>
+    <header class="topbar" role="banner">
       <div>
         <h1>Scientific Agent Lab</h1>
         <p class="subtitle">Persistent multi-agent scientific debate and synthesis</p>
       </div>
-      <div id="statusBadge" class="badge">Idle</div>
+      <div id="statusBadge" class="badge" role="status" aria-live="polite">Idle</div>
     </header>
+    <div id="toastContainer" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
 
-    <main class="layout">
-      <section class="panel control-panel">
+    <main class="layout" role="main">
+      <section class="panel control-panel" aria-label="Discussion controls">
         <h2>New Discussion</h2>
-        <form id="newDiscussionForm">
+        <form id="newDiscussionForm" aria-label="Create new discussion">
           <label>Title (optional)</label>
           <input id="titleInput" type="text" placeholder="e.g., Next-gen solid-state battery ideas" />
 
@@ -33,7 +35,35 @@
           <label>Rounds (2-8)</label>
           <input id="roundsInput" type="number" min="2" max="8" value="4" />
 
-          <button id="startBtn" type="submit">Start Discussion</button>
+          <label class="checkbox-label">
+            <input id="autoMemoryCheck" type="checkbox" checked />
+            Auto-update agent memory after run
+          </label>
+
+          <label class="checkbox-label">
+            <input id="webSearchCheck" type="checkbox" />
+            Enable agent web search
+          </label>
+
+          <label class="checkbox-label">
+            <input id="interactiveCheck" type="checkbox" />
+            Interactive mode (pause between rounds)
+          </label>
+
+          <details class="stages-details">
+            <summary>Custom Stages (optional)</summary>
+            <textarea
+              id="stagesInput"
+              rows="4"
+              placeholder='[{"name":"brainstorm","instruction":"Generate wild ideas"},{"name":"critique","instruction":"Find flaws"},{"name":"final-synthesis"}]'
+            ></textarea>
+            <p class="stages-hint">JSON array with one entry per round. Each: <code>{"name":"...","instruction":"..."}</code></p>
+          </details>
+
+          <div class="form-actions">
+            <button id="startBtn" type="submit">Start Discussion</button>
+            <button id="cancelBtn" type="button" class="cancel-btn hidden" aria-label="Cancel running discussion">Cancel</button>
+          </div>
         </form>
 
         <div class="hint-box">
@@ -44,22 +74,36 @@
         </div>
       </section>
 
-      <section class="panel run-panel">
+      <section class="panel run-panel" aria-label="Discussion output">
         <div class="panel-header-row">
           <h2>Discussion Run</h2>
           <div class="actions">
             <button id="copyFinalBtn" disabled>Copy Final Report</button>
             <button id="downloadFinalBtn" disabled>Export .md</button>
+            <button id="downloadHtmlBtn" disabled>Export .html</button>
           </div>
         </div>
         <div id="runMeta" class="run-meta empty">Start or load a session to view discussion rounds.</div>
-        <div id="roundsContainer" class="rounds"></div>
-        <article id="finalReport" class="final-report hidden"></article>
+        <div id="tokenSummary" class="token-summary hidden">
+          Tokens: <strong><span id="tokenTotal">0</span></strong> total
+          (<span id="tokenInput">0</span> in / <span id="tokenOutput">0</span> out)
+        </div>
+        <div id="roundsContainer" class="rounds" aria-label="Discussion rounds"></div>
+        <div id="userInputArea" class="user-input-area hidden">
+          <p class="user-input-prompt">Discussion paused. Provide your input for the next round:</p>
+          <textarea id="userInputText" rows="4" placeholder="Your guidance, questions, or perspective..."></textarea>
+          <div class="form-actions">
+            <button id="submitInputBtn" type="button">Submit & Continue</button>
+            <button id="skipInputBtn" type="button">Skip</button>
+          </div>
+        </div>
+        <article id="finalReport" class="final-report hidden" aria-label="Final report"></article>
       </section>
 
-      <section class="panel side-panel">
+      <section class="panel side-panel" aria-label="History and agent settings">
         <h2>Session History</h2>
-        <div id="historyList" class="history-list"></div>
+        <input id="historySearch" type="search" placeholder="Filter runs..." aria-label="Filter session history" />
+        <div id="historyList" class="history-list" role="list"></div>
 
         <hr />
 
@@ -68,6 +112,27 @@
         <select id="agentSelect"></select>
         <textarea id="memoryEditor" rows="12"></textarea>
         <button id="saveMemoryBtn">Save Memory</button>
+
+        <label>Model Override (blank = default)</label>
+        <input id="agentModelInput" type="text" placeholder="e.g., gpt-4.1-mini" />
+        <button id="saveAgentConfigBtn">Save Model</button>
+
+        <hr />
+
+        <h2>Create Agent</h2>
+        <form id="createAgentForm" aria-label="Create custom agent">
+          <label>Agent Name</label>
+          <input id="newAgentName" type="text" placeholder="e.g., Ethics Reviewer" required />
+          <label>Purpose</label>
+          <input id="newAgentPurpose" type="text" placeholder="One-line description" />
+          <label>Identity</label>
+          <textarea id="newAgentIdentity" rows="3" placeholder="# Agent Name&#10;&#10;Role description..."></textarea>
+          <label>System Prompt</label>
+          <textarea id="newAgentSystem" rows="5" placeholder="You are the... Responsibilities:..." required></textarea>
+          <label>Model (optional)</label>
+          <input id="newAgentModel" type="text" placeholder="Default model" />
+          <button type="submit">Create Agent</button>
+        </form>
       </section>
     </main>
 
@@ -87,10 +152,14 @@
           <h4></h4>
           <span class="msg-time"></span>
         </header>
-        <pre></pre>
+        <div class="msg-content"></div>
       </article>
     </template>
 
+    <script src="/vendor/marked.min.js"></script>
+    <script>
+      marked.use({ breaks: true, gfm: true });
+    </script>
     <script src="/app.js"></script>
   </body>
 </html>

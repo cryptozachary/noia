@@ -14,7 +14,7 @@ class OpenAIService {
     }
   }
 
-  async generate({ systemPrompt, userPrompt, override = {} }) {
+  async generate({ systemPrompt, userPrompt, override = {}, tools }) {
     this.assertReady();
 
     const model = override.model || this.config.model;
@@ -37,20 +37,23 @@ class OpenAIService {
             instructions: systemPrompt,
             input: userPrompt,
             max_output_tokens: maxOutputTokens,
-            reasoning: reasoningEffort ? { effort: reasoningEffort } : undefined
+            reasoning: reasoningEffort ? { effort: reasoningEffort } : undefined,
+            ...(tools && tools.length > 0 ? { tools } : {})
           },
           { signal: controller.signal }
         );
 
         clearTimeout(timer);
 
+        const usage = response.usage || null;
+
         if (response.output_text && response.output_text.trim()) {
-          return response.output_text.trim();
+          return { text: response.output_text.trim(), usage };
         }
 
         const content = extractOutputText(response);
         if (content) {
-          return content;
+          return { text: content, usage };
         }
 
         throw new Error("OpenAI response did not include output text.");
@@ -69,6 +72,75 @@ class OpenAIService {
     }
 
     throw new AppError("OpenAI generation failed unexpectedly.", 502);
+  }
+
+  async generateStream({ systemPrompt, userPrompt, override = {}, onToken, onToolEvent, tools }) {
+    this.assertReady();
+
+    const model = override.model || this.config.model;
+    const maxOutputTokens = override.maxOutputTokens || this.config.maxOutputTokens;
+    const reasoningEffort = override.reasoningEffort || this.config.reasoningEffort;
+
+    let attempt = 0;
+    const maxAttempts = Math.max(1, this.config.retries + 1);
+
+    while (attempt < maxAttempts) {
+      attempt += 1;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
+
+      try {
+        const stream = await this.client.responses.create(
+          {
+            model,
+            instructions: systemPrompt,
+            input: userPrompt,
+            max_output_tokens: maxOutputTokens,
+            reasoning: reasoningEffort ? { effort: reasoningEffort } : undefined,
+            stream: true,
+            ...(tools && tools.length > 0 ? { tools } : {})
+          },
+          { signal: controller.signal }
+        );
+
+        let fullText = "";
+        let usage = null;
+
+        for await (const event of stream) {
+          if (event.type === "response.output_text.delta") {
+            fullText += event.delta;
+            if (onToken) onToken(event.delta);
+          } else if (event.type === "response.completed") {
+            usage = event.response && event.response.usage ? event.response.usage : null;
+          } else if (event.type === "response.web_search_call.searching") {
+            if (onToolEvent) onToolEvent({ type: "web_search", status: "searching" });
+          } else if (event.type === "response.web_search_call.completed") {
+            if (onToolEvent) onToolEvent({ type: "web_search", status: "completed" });
+          }
+        }
+
+        clearTimeout(timer);
+
+        if (!fullText.trim()) {
+          throw new Error("OpenAI stream did not produce output text.");
+        }
+
+        return { text: fullText.trim(), usage };
+      } catch (error) {
+        clearTimeout(timer);
+        logger.warn("OpenAI stream attempt failed", { attempt, message: error.message });
+
+        if (attempt >= maxAttempts) {
+          throw new AppError("OpenAI streaming failed after retries.", 502, {
+            message: error.message
+          });
+        }
+
+        await sleep(350 * attempt);
+      }
+    }
+
+    throw new AppError("OpenAI streaming failed unexpectedly.", 502);
   }
 }
 

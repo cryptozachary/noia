@@ -5,8 +5,18 @@ const apiRouter = require("./src/routes/api");
 const { ensureBootstrap } = require("./src/storage/bootstrap");
 const { logger } = require("./src/utils/logger");
 const { toAppError } = require("./src/utils/errors");
+const { shutdownAll } = require("./src/orchestrator/runManager");
 
 async function start() {
+  const provider = (config.llmProvider || "openai").toLowerCase();
+  if (provider === "anthropic" && !config.anthropic.apiKey) {
+    logger.error("ANTHROPIC_API_KEY is not set. Add it to your .env file and restart.");
+    process.exit(1);
+  } else if (provider !== "anthropic" && !config.openai.apiKey) {
+    logger.error("OPENAI_API_KEY is not set. Add it to your .env file and restart.");
+    process.exit(1);
+  }
+
   await ensureBootstrap();
 
   const app = express();
@@ -31,9 +41,25 @@ async function start() {
     });
   });
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     logger.info(`Scientific Agent Lab running on http://localhost:${config.port}`);
   });
+
+  function gracefulShutdown(signal) {
+    logger.info(`${signal} received — shutting down gracefully`);
+    shutdownAll();
+    server.close(() => {
+      logger.info("Server closed");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.warn("Forced shutdown after timeout");
+      process.exit(1);
+    }, 10000);
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 start().catch((error) => {
