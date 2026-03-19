@@ -66,8 +66,8 @@ describe("Discussion Branching", () => {
     cloned.metadata = { status: "completed" };
     await store.saveRun(cloned);
 
-    const runs = await store.listRuns();
-    const branchedRun = runs.find((r) => r.id === cloned.id);
+    const result = await store.listRuns();
+    const branchedRun = result.runs.find((r) => r.id === cloned.id);
     assert.ok(branchedRun);
     assert.ok(branchedRun.branchedFrom);
     assert.strictEqual(branchedRun.branchedFrom.runId, original.id);

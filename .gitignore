@@ -22,6 +22,9 @@ Desktop.ini
 *.swp
 *.swo
 
+# Build output
+dist/
+
 # Runtime data
 pids/
 *.pid

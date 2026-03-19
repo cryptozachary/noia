@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const express = require("express");
 const { config } = require("./src/config");
 const apiRouter = require("./src/routes/api");
@@ -19,16 +20,25 @@ async function start() {
 
   await ensureBootstrap();
 
+  const recovered = await apiRouter.initializeStore();
+  if (recovered.length > 0) {
+    logger.info(`Recovered ${recovered.length} interrupted run(s)`, { runIds: recovered });
+  }
+
   const app = express();
 
   app.use(express.json({ limit: "2mb" }));
   app.use(express.urlencoded({ extended: true }));
 
   app.use("/api", apiRouter);
-  app.use(express.static(path.join(__dirname, "public")));
 
+  const distDir = path.join(__dirname, "dist");
+  const publicDir = path.join(__dirname, "public");
+  const staticDir = fs.existsSync(distDir) ? distDir : publicDir;
+
+  app.use(express.static(staticDir));
   app.get("*", (_req, res) => {
-    res.sendFile(path.join(__dirname, "public", "index.html"));
+    res.sendFile(path.join(staticDir, "index.html"));
   });
 
   app.use((error, _req, res, _next) => {

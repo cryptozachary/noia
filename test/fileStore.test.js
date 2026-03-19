@@ -74,10 +74,11 @@ describe("FileStore", () => {
     run2.metadata = { status: "running" };
     await store.saveRun(run2);
 
-    const runs = await store.listRuns();
-    assert.equal(runs.length, 2);
+    const result = await store.listRuns();
+    assert.equal(result.runs.length, 2);
+    assert.equal(result.total, 2);
     // Most recent first
-    assert.equal(runs[0].topic, "second");
+    assert.equal(result.runs[0].topic, "second");
   });
 
   it("listRuns uses cache on second call", async () => {
@@ -87,7 +88,62 @@ describe("FileStore", () => {
 
     const first = await store.listRuns();
     const second = await store.listRuns();
-    assert.equal(first.length, second.length);
+    assert.equal(first.runs.length, second.runs.length);
+  });
+
+  it("saveRun creates .meta.json alongside run file", async () => {
+    const run = await store.createRunRecord({ topic: "meta test", title: "M", rounds: 2, settings: {} });
+    run.metadata = { status: "running" };
+    await store.saveRun(run);
+
+    const meta = await store.readJson(store.runMetaPath(run.id));
+    assert.equal(meta.id, run.id);
+    assert.equal(meta.status, "running");
+    assert.equal(meta.title, "M");
+  });
+
+  it("listRuns returns paginated results", async () => {
+    for (let i = 0; i < 5; i++) {
+      const run = await store.createRunRecord({ topic: `topic ${i}`, title: `T${i}`, rounds: 2, settings: {} });
+      run.metadata = { status: "completed" };
+      await store.saveRun(run);
+    }
+
+    const page1 = await store.listRuns({ page: 1, limit: 2 });
+    assert.equal(page1.runs.length, 2);
+    assert.equal(page1.total, 5);
+    assert.equal(page1.page, 1);
+
+    const page3 = await store.listRuns({ page: 3, limit: 2 });
+    assert.equal(page3.runs.length, 1);
+  });
+
+  it("recoverStaleRuns marks running runs as interrupted", async () => {
+    const run = await store.createRunRecord({ topic: "stale", title: "S", rounds: 2, settings: {} });
+    run.metadata = { status: "running" };
+    await store.saveRun(run);
+
+    const recovered = await store.recoverStaleRuns();
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0], run.id);
+
+    const loaded = await store.loadRun(run.id);
+    assert.equal(loaded.metadata.status, "interrupted");
+
+    const meta = await store.readJson(store.runMetaPath(run.id));
+    assert.equal(meta.status, "interrupted");
+  });
+
+  it("migrateMetaFiles creates meta for existing runs", async () => {
+    const runId = "run-legacy-test";
+    const run = { id: runId, title: "Legacy", topic: "old", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), metadata: { status: "completed" }, roundMessages: [], rounds: 2 };
+    await store.writeJson(store.runPath(runId), run);
+
+    await store.migrateMetaFiles();
+
+    const meta = await store.readJson(store.runMetaPath(runId));
+    assert.equal(meta.id, runId);
+    assert.equal(meta.status, "completed");
   });
 
   it("readText returns fallback for missing file", async () => {

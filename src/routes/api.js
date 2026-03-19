@@ -38,10 +38,12 @@ router.get("/health", (_req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
-router.get("/runs", async (_req, res, next) => {
+router.get("/runs", async (req, res, next) => {
   try {
-    const runs = await store.listRuns();
-    res.json({ runs });
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const result = await store.listRuns({ page, limit });
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -597,4 +599,10 @@ router.delete("/templates/:templateId", async (req, res, next) => {
   }
 });
 
+async function initializeStore() {
+  await store.migrateMetaFiles();
+  return store.recoverStaleRuns();
+}
+
+router.initializeStore = initializeStore;
 module.exports = router;
