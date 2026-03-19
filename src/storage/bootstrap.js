@@ -82,7 +82,9 @@ async function ensureBootstrap() {
     path.join(config.dataDir, "runs"),
     path.join(config.dataDir, "exports"),
     path.join(config.dataDir, "topics"),
-    path.join(config.dataDir, "templates")
+    path.join(config.dataDir, "templates"),
+    path.join(config.dataDir, "users"),
+    path.join(config.dataDir, "documents")
   ];
 
   for (const dir of baseDirs) {
@@ -92,7 +94,9 @@ async function ensureBootstrap() {
   for (const [agentId, seed] of Object.entries(AGENT_SEEDS)) {
     const agentDir = path.join(config.dataDir, "agents", agentId);
     const sessionsDir = path.join(agentDir, "sessions");
+    const snapshotsDir = path.join(agentDir, "snapshots");
     await fs.mkdir(sessionsDir, { recursive: true });
+    await fs.mkdir(snapshotsDir, { recursive: true });
 
     await createIfMissing(path.join(agentDir, "identity.md"), seed.identity + "\n");
     await createIfMissing(path.join(agentDir, "system.md"), seed.system + "\n");

@@ -31,6 +31,10 @@ export const api = {
   saveAgentConfig: (id, model) => fetchJson(`/api/agents/${encodeURIComponent(id)}/config`, { method: "PUT", body: JSON.stringify({ model }) }),
   getAgentInsights: (id) => fetchJson(`/api/agents/${encodeURIComponent(id)}/insights`),
   createAgent: (body) => fetchJson("/api/agents", { method: "POST", body: JSON.stringify(body) }),
+  getSnapshots: (id) => fetchJson(`/api/agents/${encodeURIComponent(id)}/snapshots`),
+  createSnapshot: (id, label) => fetchJson(`/api/agents/${encodeURIComponent(id)}/snapshot`, { method: "POST", body: JSON.stringify({ label }) }),
+  restoreSnapshot: (id, snapId) => fetchJson(`/api/agents/${encodeURIComponent(id)}/restore/${encodeURIComponent(snapId)}`, { method: "POST" }),
+  pruneMemory: (id, options) => fetchJson(`/api/agents/${encodeURIComponent(id)}/prune-memory`, { method: "POST", body: JSON.stringify(options || {}) }),
 
   // Annotations
   getAnnotations: (id) => fetchJson(`/api/runs/${encodeURIComponent(id)}/annotations`),
@@ -48,6 +52,21 @@ export const api = {
   getTemplates: () => fetchJson("/api/templates"),
   saveTemplate: (body) => fetchJson("/api/templates", { method: "POST", body: JSON.stringify(body) }),
   deleteTemplate: (id) => fetchJson(`/api/templates/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // Documents
+  getDocuments: () => fetchJson("/api/documents"),
+  getDocument: (id) => fetchJson(`/api/documents/${encodeURIComponent(id)}`),
+  deleteDocument: (id) => fetchJson(`/api/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  importArxiv: (arxivId) => fetchJson("/api/documents/arxiv", { method: "POST", body: JSON.stringify({ arxivId }) }),
+  uploadDocument: async (file, title) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (title) formData.append("title", title);
+    const response = await fetch("/api/documents/upload", { method: "POST", body: formData });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Upload failed.");
+    return payload;
+  },
 
   // Export URLs (not fetched, opened directly)
   exportMdUrl: (id) => `/api/runs/${encodeURIComponent(id)}/export/md`,

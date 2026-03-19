@@ -17,13 +17,17 @@ const { createLLMServiceForProvider } = require("../services/llmFactory");
 const { setPaused } = require("./runManager");
 
 class DiscussionOrchestrator {
-  constructor({ store, openaiService, researchService, defaultModel, fullConfig, embeddingService }) {
+  constructor({ store, openaiService, researchService, defaultModel, fullConfig, embeddingService, memoryPruner, documentService }) {
     this.store = store;
     this.openaiService = openaiService;
     this.researchService = researchService || null;
     this.defaultModel = defaultModel;
     this.fullConfig = fullConfig || null;
     this.embeddingService = embeddingService || null;
+    this.memoryPruner = memoryPruner || null;
+    this.documentService = documentService || null;
+    this.agentRetries = fullConfig?.agentRetries ?? 1;
+    this.agentRetryDelayMs = fullConfig?.agentRetryDelayMs ?? 2000;
   }
 
   async runDiscussion({ topic, title, rounds, settings = {}, stages = null, emitter = null, existingRun = null, checkCancelled = null, waitForInput = null, startRound = 1 }) {
@@ -98,6 +102,18 @@ class DiscussionOrchestrator {
         researchContext = this.researchService.formatAsContext(results);
         run._researchContext = researchContext;
         if (emitter) emitter.emit("research-complete", { sourceCount: results.length });
+      }
+
+      // Inject document context if documentIds provided
+      if (this.documentService && settings.documentIds && settings.documentIds.length > 0) {
+        try {
+          const docContext = await this.documentService.getDocumentContext(settings.documentIds, topic);
+          if (docContext) {
+            run._researchContext = (run._researchContext || "") + "\n\n" + docContext;
+          }
+        } catch (err) {
+          logger.warn("Document context injection failed", { error: err.message });
+        }
       }
 
       for (let round = startRound; round <= rounds; round += 1) {
@@ -221,113 +237,134 @@ class DiscussionOrchestrator {
         const globalWebSearch = settings.webSearch === true;
 
         const agentPromises = getScientistAgentIds().map(async (agentId) => {
-          try {
-            const config = agentConfigs[agentId];
-            const peerContext = collectPeerMessages(run.roundMessages, agentId, compressionEnabled ? (run.roundSummaries || {}) : {});
+          const maxRetries = this.agentRetries;
+          const baseDelay = this.agentRetryDelayMs;
 
-            const userPrompt = composeScientistPrompt({
-              agentId,
-              topic,
-              roundNumber: round,
-              stage,
-              peerMessages: peerContext.summary ? undefined : peerContext.recentMessages,
-              peerContext: peerContext.summary ? peerContext : undefined,
-              researchContext: run._researchContext || "",
-              stageInstruction: customInstruction,
-              userInput: run._userInput || ""
-            });
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+              const config = agentConfigs[agentId];
+              const peerContext = collectPeerMessages(run.roundMessages, agentId, compressionEnabled ? (run.roundSummaries || {}) : {});
 
-            const systemPrompt = [
-              config.identity,
-              config.system,
-              "Long-term memory:",
-              config.memory,
-              safetySystemAddendum()
-            ].join("\n\n");
+              const userPrompt = composeScientistPrompt({
+                agentId,
+                topic,
+                roundNumber: round,
+                stage,
+                peerMessages: peerContext.summary ? undefined : peerContext.recentMessages,
+                peerContext: peerContext.summary ? peerContext : undefined,
+                researchContext: run._researchContext || "",
+                stageInstruction: customInstruction,
+                userInput: run._userInput || ""
+              });
 
-            const agentOverride = config.config && config.config.model
-              ? { ...effectiveSettings, model: config.config.model }
-              : effectiveSettings;
+              const systemPrompt = [
+                config.identity,
+                config.system,
+                "Long-term memory:",
+                config.memory,
+                safetySystemAddendum()
+              ].join("\n\n");
 
-            const agentProvider = config.config && config.config.provider;
-            const service = agentProvider && this.fullConfig
-              ? createLLMServiceForProvider(agentProvider, this.fullConfig)
-              : this.openaiService;
+              const agentOverride = config.config && config.config.model
+                ? { ...effectiveSettings, model: config.config.model }
+                : effectiveSettings;
 
-            const agentWebSearch = config.config?.webSearch;
-            const useWebSearch = agentWebSearch !== undefined ? agentWebSearch : globalWebSearch;
-            const tools = useWebSearch ? buildWebSearchTools(agentProvider || this.fullConfig?.llmProvider) : undefined;
+              const agentProvider = config.config && config.config.provider;
+              const service = agentProvider && this.fullConfig
+                ? createLLMServiceForProvider(agentProvider, this.fullConfig)
+                : this.openaiService;
 
-            const onToken = emitter ? (token) => {
-              emitter.emit("agent-token", { round, agentId, agentName: getAgent(agentId).name, token });
-            } : undefined;
-            const onToolEvent = emitter ? (evt) => {
-              emitter.emit("tool-event", { round, agentId, ...evt });
-            } : undefined;
+              const agentWebSearch = config.config?.webSearch;
+              const useWebSearch = agentWebSearch !== undefined ? agentWebSearch : globalWebSearch;
+              const tools = useWebSearch ? buildWebSearchTools(agentProvider || this.fullConfig?.llmProvider) : undefined;
 
-            const result = useStreaming && typeof service.generateStream === "function"
-              ? await service.generateStream({
-                  systemPrompt,
-                  userPrompt,
-                  override: agentOverride,
-                  onToken,
-                  onToolEvent,
-                  tools
-                })
-              : await service.generate({
-                  systemPrompt,
-                  userPrompt,
-                  override: agentOverride,
-                  tools
+              const onToken = emitter ? (token) => {
+                emitter.emit("agent-token", { round, agentId, agentName: getAgent(agentId).name, token });
+              } : undefined;
+              const onToolEvent = emitter ? (evt) => {
+                emitter.emit("tool-event", { round, agentId, ...evt });
+              } : undefined;
+
+              const result = useStreaming && typeof service.generateStream === "function"
+                ? await service.generateStream({
+                    systemPrompt,
+                    userPrompt,
+                    override: agentOverride,
+                    onToken,
+                    onToolEvent,
+                    tools
+                  })
+                : await service.generate({
+                    systemPrompt,
+                    userPrompt,
+                    override: agentOverride,
+                    tools
+                  });
+
+              accumulateUsage(run.metadata.tokenUsage, result.usage);
+              const response = ensureAgentResponseStructure(result.text);
+
+              const message = {
+                agentId,
+                agentName: getAgent(agentId).name,
+                timestamp: new Date().toISOString(),
+                content: response,
+                tokenUsage: result.usage || null
+              };
+
+              if (emitter) emitter.emit("agent-response", {
+                round, agentId, agentName: message.agentName,
+                content: response, timestamp: message.timestamp,
+                tokenUsage: result.usage || null
+              });
+
+              await this.store.appendAgentSessionEntry(agentId, run.id, {
+                round,
+                stage,
+                topic,
+                coordinatorPrompt,
+                prompt: userPrompt,
+                response,
+                timestamp: message.timestamp
+              });
+
+              return message;
+            } catch (agentError) {
+              const isLast = attempt >= maxRetries;
+              const transient = isTransientError(agentError);
+
+              if (transient && !isLast) {
+                const delay = baseDelay * Math.pow(2, attempt);
+                logger.info("Retrying agent after transient error", {
+                  agentId, round, attempt: attempt + 1, delay, error: agentError.message
                 });
+                if (emitter) emitter.emit("agent-retry", {
+                  round, agentId, agentName: getAgent(agentId)?.name || agentId,
+                  attempt: attempt + 1, maxRetries, error: agentError.message
+                });
+                await sleep(delay);
+                continue;
+              }
 
-            accumulateUsage(run.metadata.tokenUsage, result.usage);
-            const response = ensureAgentResponseStructure(result.text);
-
-            const message = {
-              agentId,
-              agentName: getAgent(agentId).name,
-              timestamp: new Date().toISOString(),
-              content: response,
-              tokenUsage: result.usage || null
-            };
-
-            if (emitter) emitter.emit("agent-response", {
-              round, agentId, agentName: message.agentName,
-              content: response, timestamp: message.timestamp,
-              tokenUsage: result.usage || null
-            });
-
-            await this.store.appendAgentSessionEntry(agentId, run.id, {
-              round,
-              stage,
-              topic,
-              coordinatorPrompt,
-              prompt: userPrompt,
-              response,
-              timestamp: message.timestamp
-            });
-
-            return message;
-          } catch (agentError) {
-            logger.warn("Agent failed during round, continuing with fallback", {
-              agentId, round, error: agentError.message
-            });
-            const fallbackContent = ensureAgentResponseStructure("");
-            const fallback = {
-              agentId,
-              agentName: getAgent(agentId)?.name || agentId,
-              timestamp: new Date().toISOString(),
-              content: fallbackContent,
-              tokenUsage: null,
-              error: agentError.message
-            };
-            if (emitter) emitter.emit("agent-response", {
-              round, agentId, agentName: fallback.agentName,
-              content: fallbackContent, timestamp: fallback.timestamp,
-              tokenUsage: null, error: agentError.message
-            });
-            return fallback;
+              logger.warn("Agent failed during round, continuing with fallback", {
+                agentId, round, attempt, error: agentError.message
+              });
+              const fallbackContent = ensureAgentResponseStructure("");
+              const fallback = {
+                agentId,
+                agentName: getAgent(agentId)?.name || agentId,
+                timestamp: new Date().toISOString(),
+                content: fallbackContent,
+                tokenUsage: null,
+                error: agentError.message
+              };
+              if (emitter) emitter.emit("agent-response", {
+                round, agentId, agentName: fallback.agentName,
+                content: fallbackContent, timestamp: fallback.timestamp,
+                tokenUsage: null, error: agentError.message
+              });
+              return fallback;
+            }
           }
         });
 
@@ -391,6 +428,22 @@ class DiscussionOrchestrator {
           if (emitter) emitter.emit("memory-update-start", { runId: run.id });
           await this.updateAgentMemories(run, agentConfigs, effectiveSettings);
           if (emitter) emitter.emit("memory-update-complete", { runId: run.id });
+
+          // Auto-prune if memory has grown beyond threshold
+          if (this.memoryPruner) {
+            const threshold = this.fullConfig?.memoryPrune?.autoThreshold ?? 30;
+            for (const agentId of getScientistAgentIds()) {
+              try {
+                const shouldPrune = await this.memoryPruner.shouldAutoPrune(agentId, threshold);
+                if (shouldPrune) {
+                  logger.info("Auto-pruning agent memory", { agentId, threshold });
+                  await this.memoryPruner.pruneAgentMemory(agentId);
+                }
+              } catch (pruneErr) {
+                logger.warn("Auto-prune failed", { agentId, error: pruneErr.message });
+              }
+            }
+          }
         } catch (memError) {
           logger.warn("Agent memory auto-update failed", { error: memError.message });
         }
@@ -620,4 +673,18 @@ function serializeTranscript(roundMessages) {
     .join("\n\n");
 }
 
-module.exports = { DiscussionOrchestrator, collectPeerMessages };
+function isTransientError(error) {
+  const code = error.statusCode || error.status || 0;
+  if (code === 429 || code >= 500) return true;
+  const msg = (error.message || "").toLowerCase();
+  if (msg.includes("timeout") || msg.includes("econnreset") || msg.includes("enotfound")) return true;
+  if (msg.includes("rate limit") || msg.includes("rate_limit")) return true;
+  if (error.code === "ECONNRESET" || error.code === "ETIMEDOUT" || error.code === "ENOTFOUND") return true;
+  return false;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+module.exports = { DiscussionOrchestrator, collectPeerMessages, isTransientError };

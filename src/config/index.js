@@ -39,7 +39,18 @@ const config = {
   },
   embedding: {
     model: process.env.EMBEDDING_MODEL || "text-embedding-3-small"
-  }
+  },
+  requireAuth: process.env.REQUIRE_AUTH === "true",
+  adminApiKey: process.env.ADMIN_API_KEY || "",
+  agentRetries: parseNumber(process.env.AGENT_RETRIES, 1),
+  agentRetryDelayMs: parseNumber(process.env.AGENT_RETRY_DELAY_MS, 2000),
+  memoryPrune: {
+    maxSections: parseNumber(process.env.MEMORY_MAX_SECTIONS, 20),
+    keepRecent: parseNumber(process.env.MEMORY_KEEP_RECENT, 5),
+    autoThreshold: parseNumber(process.env.MEMORY_AUTO_PRUNE_THRESHOLD, 30)
+  },
+  storageBackend: process.env.STORAGE_BACKEND || "file",
+  sqlitePath: process.env.SQLITE_PATH || ""
 };
 
 module.exports = { config };

@@ -12,6 +12,8 @@ class FileStore {
     this.exportsDir = path.join(this.baseDir, "exports");
     this.topicsDir = path.join(this.baseDir, "topics");
     this.templatesDir = path.join(this.baseDir, "templates");
+    this.usersDir = path.join(this.baseDir, "users");
+    this.documentsDir = path.join(this.baseDir, "documents");
     this._runIndexCache = null;
     this._runIndexDirty = true;
   }
@@ -57,11 +59,11 @@ class FileStore {
     return path.join(this.runsDir, `${runId}.meta.json`);
   }
 
-  async createRunRecord({ topic, title, rounds, settings }) {
+  async createRunRecord({ topic, title, rounds, settings, userId }) {
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
 
-    return {
+    const record = {
       id: runId,
       title,
       topic,
@@ -75,6 +77,8 @@ class FileStore {
         status: "running"
       }
     };
+    if (userId) record.userId = userId;
+    return record;
   }
 
   async saveRun(run) {
@@ -88,6 +92,7 @@ class FileStore {
       status: run.metadata && run.metadata.status ? run.metadata.status : "unknown"
     };
     if (run.branchedFrom) meta.branchedFrom = run.branchedFrom;
+    if (run.userId) meta.userId = run.userId;
     await Promise.all([
       this.writeJson(this.runPath(run.id), run),
       this.writeJson(this.runMetaPath(run.id), meta)
@@ -358,6 +363,77 @@ class FileStore {
     } catch {
       return 0;
     }
+  }
+
+  async createUser({ name }) {
+    const id = `user-${randomUUID().slice(0, 8)}`;
+    const apiKey = `noia-${randomUUID()}`;
+    const user = { id, name: name || "User", apiKey, createdAt: new Date().toISOString() };
+    await fs.mkdir(this.usersDir, { recursive: true });
+    await this.writeJson(path.join(this.usersDir, `${id}.json`), user);
+    return user;
+  }
+
+  async listUsers() {
+    try {
+      const entries = await fs.readdir(this.usersDir, { withFileTypes: true });
+      const users = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        try {
+          const user = await this.readJson(path.join(this.usersDir, entry.name), null);
+          if (user && user.id) users.push(user);
+        } catch { /* skip */ }
+      }
+      return users;
+    } catch {
+      return [];
+    }
+  }
+
+  async loadUser(userId) {
+    const user = await this.readJson(path.join(this.usersDir, `${userId}.json`), null);
+    if (!user) throw new AppError(`User not found: ${userId}`, 404);
+    return user;
+  }
+
+  async deleteUser(userId) {
+    await fs.unlink(path.join(this.usersDir, `${userId}.json`)).catch(() => {});
+  }
+
+  // ── Documents ──
+
+  async saveDocument(docId, data) {
+    await fs.mkdir(this.documentsDir, { recursive: true });
+    await this.writeJson(path.join(this.documentsDir, `${docId}.json`), data);
+  }
+
+  async loadDocument(docId) {
+    const doc = await this.readJson(path.join(this.documentsDir, `${docId}.json`), null);
+    if (!doc) throw new AppError(`Document not found: ${docId}`, 404);
+    return doc;
+  }
+
+  async listDocuments() {
+    try {
+      const entries = await fs.readdir(this.documentsDir, { withFileTypes: true });
+      const docs = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        try {
+          const doc = await this.readJson(path.join(this.documentsDir, entry.name), null);
+          if (doc && doc.id) docs.push(doc);
+        } catch { /* skip */ }
+      }
+      docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return docs;
+    } catch {
+      return [];
+    }
+  }
+
+  async deleteDocument(docId) {
+    await fs.unlink(path.join(this.documentsDir, `${docId}.json`)).catch(() => {});
   }
 }
 

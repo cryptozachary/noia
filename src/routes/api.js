@@ -1,7 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("crypto");
 const { config } = require("../config");
-const { FileStore } = require("../storage/fileStore");
+const { createStore } = require("../storage/index");
 const { createLLMService, createLLMServiceForProvider } = require("../services/llmFactory");
 const { validateDiscussionRequest } = require("../services/outputValidator");
 const { AppError } = require("../utils/errors");
@@ -12,21 +12,34 @@ const { buildMarkdownExport, buildHtmlExport } = require("../services/exportBuil
 const { ResearchService } = require("../services/researchService");
 const { calculateCost, estimateRunCost, formatCost } = require("../services/costCalculator");
 const { EmbeddingService, chunkMemory, truncateEmbedding } = require("../services/embeddingService");
+const { SnapshotService } = require("../services/snapshotService");
+const { MemoryPruner } = require("../services/memoryPruner");
+const { authMiddleware, requireAdmin, invalidateUserCache } = require("../middleware/auth");
+const { DocumentService } = require("../services/documentService");
+const multer = require("multer");
 
 const router = express.Router();
 
-const store = new FileStore(config.dataDir);
+const store = createStore();
 const llmService = createLLMService(config);
 const researchService = new ResearchService(config.search);
 const embeddingService = new EmbeddingService({ apiKey: config.openai.apiKey, embeddingModel: config.embedding.model });
+const snapshotService = new SnapshotService(store);
+const memoryPruner = new MemoryPruner({ store, llmService, snapshotService, embeddingService });
+const documentService = new DocumentService({ store, embeddingService });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const orchestrator = new DiscussionOrchestrator({
   store,
   openaiService: llmService,
   researchService,
   defaultModel: config.llmProvider === "anthropic" ? config.anthropic.model : config.openai.model,
   fullConfig: config,
-  embeddingService
+  embeddingService,
+  memoryPruner,
+  documentService
 });
+
+router.use(authMiddleware(store));
 
 function validatePathParam(value) {
   if (!value || /[/\\]|\.\./.test(value)) {
@@ -36,6 +49,34 @@ function validatePathParam(value) {
 
 router.get("/health", (_req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
+});
+
+router.post("/users", requireAdmin, async (req, res, next) => {
+  try {
+    const name = (req.body && req.body.name || "").trim();
+    if (!name) throw new AppError("User name is required.", 400);
+    const user = await store.createUser({ name });
+    invalidateUserCache();
+    res.status(201).json({ user });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/users/me", (req, res) => {
+  if (!req.user) return res.json({ user: null });
+  res.json({ user: { id: req.user.id, name: req.user.name } });
+});
+
+router.delete("/users/:userId", requireAdmin, async (req, res, next) => {
+  try {
+    validatePathParam(req.params.userId);
+    await store.deleteUser(req.params.userId);
+    invalidateUserCache();
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.get("/runs", async (req, res, next) => {
@@ -113,7 +154,8 @@ router.post("/discussions", async (req, res, next) => {
       topic: valid.topic,
       title: valid.title,
       rounds: valid.rounds,
-      settings
+      settings,
+      userId: req.user ? req.user.id : null
     });
 
     run.metadata = {
@@ -178,6 +220,7 @@ router.get("/discussions/:runId/stream", (req, res) => {
   const onAgentToken = (d) => send("agent-token", d);
   const onCoordinatorToken = (d) => send("coordinator-token", d);
   const onToolEvent = (d) => send("tool-event", d);
+  const onAgentRetry = (d) => send("agent-retry", d);
   const onRoundComplete = (d) => send("round-complete", d);
   const onRoundPaused = (d) => send("round-paused", d);
   const onRoundResumed = (d) => send("round-resumed", d);
@@ -200,6 +243,7 @@ router.get("/discussions/:runId/stream", (req, res) => {
   emitter.on("agent-token", onAgentToken);
   emitter.on("coordinator-token", onCoordinatorToken);
   emitter.on("tool-event", onToolEvent);
+  emitter.on("agent-retry", onAgentRetry);
   emitter.on("round-complete", onRoundComplete);
   emitter.on("round-paused", onRoundPaused);
   emitter.on("round-resumed", onRoundResumed);
@@ -232,6 +276,7 @@ router.get("/discussions/:runId/stream", (req, res) => {
     emitter.off("agent-token", onAgentToken);
     emitter.off("coordinator-token", onCoordinatorToken);
     emitter.off("tool-event", onToolEvent);
+    emitter.off("agent-retry", onAgentRetry);
     emitter.off("round-complete", onRoundComplete);
     emitter.off("round-paused", onRoundPaused);
     emitter.off("round-resumed", onRoundResumed);
@@ -296,6 +341,7 @@ router.put("/agents/:agentId/memory", async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     const memory = typeof req.body.memory === "string" ? req.body.memory : "";
+    await snapshotService.createSnapshot(req.params.agentId, { label: "pre-edit" });
     await store.writeAgentMemory(req.params.agentId, memory);
     res.json({ ok: true });
   } catch (error) {
@@ -335,6 +381,19 @@ router.post("/agents/:agentId/reindex-memory", async (req, res, next) => {
       chunks: chunks.map((text, i) => ({ text, embedding: truncateEmbedding(embeddings[i]) }))
     });
     res.json({ ok: true, chunks: chunks.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/agents/:agentId/prune-memory", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.agentId);
+    const maxSections = req.body && req.body.maxSections ? Number(req.body.maxSections) : config.memoryPrune.maxSections;
+    const keepRecent = req.body && req.body.keepRecent ? Number(req.body.keepRecent) : config.memoryPrune.keepRecent;
+    const dryRun = req.body && req.body.dryRun === true;
+    const result = await memoryPruner.pruneAgentMemory(req.params.agentId, { maxSections, keepRecent, dryRun });
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -408,6 +467,38 @@ router.put("/agents/:agentId/config", async (req, res, next) => {
     const agentConfig = model ? { model } : {};
     await store.saveAgentConfig(agentId, agentConfig);
     res.json({ ok: true, config: agentConfig });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/agents/:agentId/snapshot", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.agentId);
+    const label = req.body && typeof req.body.label === "string" ? req.body.label.trim() : undefined;
+    const snapshot = await snapshotService.createSnapshot(req.params.agentId, { label });
+    res.status(201).json({ snapshot: { id: snapshot.id, label: snapshot.label, createdAt: snapshot.createdAt } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/agents/:agentId/snapshots", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.agentId);
+    const snapshots = await snapshotService.listSnapshots(req.params.agentId);
+    res.json({ snapshots });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/agents/:agentId/restore/:snapshotId", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.agentId);
+    validatePathParam(req.params.snapshotId);
+    const restored = await snapshotService.restoreSnapshot(req.params.agentId, req.params.snapshotId);
+    res.json({ ok: true, restoredFrom: restored.id });
   } catch (error) {
     next(error);
   }
@@ -593,6 +684,55 @@ router.delete("/templates/:templateId", async (req, res, next) => {
   try {
     validatePathParam(req.params.templateId);
     await store.deleteTemplate(req.params.templateId);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Documents ──
+
+router.post("/documents/upload", upload.single("file"), async (req, res, next) => {
+  try {
+    const metadata = { title: req.body?.title };
+    const result = await documentService.ingestUpload(req.file, metadata);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/documents/arxiv", async (req, res, next) => {
+  try {
+    const { arxivId } = req.body;
+    const result = await documentService.ingestArxiv(arxivId);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/documents", async (_req, res, next) => {
+  try {
+    const docs = await documentService.listDocuments();
+    res.json({ documents: docs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/documents/:docId", async (req, res, next) => {
+  try {
+    const doc = await documentService.getDocument(req.params.docId);
+    res.json(doc);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/documents/:docId", async (req, res, next) => {
+  try {
+    await documentService.deleteDocument(req.params.docId);
     res.json({ ok: true });
   } catch (error) {
     next(error);

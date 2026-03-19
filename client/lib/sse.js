@@ -35,6 +35,13 @@ export function connectSSE(runId) {
     } catch { /* ignore */ }
   });
 
+  source.addEventListener("agent-retry", (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      addToast(`Retrying ${data.agentName} (attempt ${data.attempt}/${data.maxRetries})...`, "warning");
+    } catch { /* ignore */ }
+  });
+
   source.addEventListener("round-start", (e) => {
     try {
       const data = JSON.parse(e.data);
