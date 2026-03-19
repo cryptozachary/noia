@@ -103,14 +103,16 @@ class FileStore {
       try {
         const run = await this.readJson(fullPath, null);
         if (run && run.id) {
-          runs.push({
+          const entry2 = {
             id: run.id,
             title: run.title,
             topic: run.topic,
             createdAt: run.createdAt,
             updatedAt: run.updatedAt,
             status: run.metadata && run.metadata.status ? run.metadata.status : "unknown"
-          });
+          };
+          if (run.branchedFrom) entry2.branchedFrom = run.branchedFrom;
+          runs.push(entry2);
         }
       } catch (_error) {
         // Skip malformed runs but keep the service available.
@@ -185,9 +187,26 @@ class FileStore {
     await this.writeText(path.join(agentDir, "memory.md"), memory || "# Memory\n");
   }
 
+  annotationsPath(runId) {
+    return path.join(this.runsDir, `${runId}.annotations.json`);
+  }
+
+  async loadAnnotations(runId) {
+    return this.readJson(this.annotationsPath(runId), { runId, annotations: [] });
+  }
+
+  async saveAnnotations(runId, data) {
+    await this.writeJson(this.annotationsPath(runId), data);
+  }
+
+  async deleteAnnotationsForRun(runId) {
+    await fs.unlink(this.annotationsPath(runId)).catch(() => {});
+  }
+
   async deleteRun(runId) {
     await fs.unlink(this.runPath(runId)).catch(() => {});
     await fs.unlink(path.join(this.exportsDir, `${runId}.md`)).catch(() => {});
+    await this.deleteAnnotationsForRun(runId);
 
     const agentDirs = await this.listAgents();
     for (const agentId of agentDirs) {
@@ -196,6 +215,28 @@ class FileStore {
     }
 
     this._runIndexDirty = true;
+  }
+
+  async loadMemoryEmbeddings(agentId) {
+    return this.readJson(this.agentPath(agentId, "memory_embeddings.json"), null);
+  }
+
+  async saveMemoryEmbeddings(agentId, data) {
+    await this.writeJson(this.agentPath(agentId, "memory_embeddings.json"), data);
+  }
+
+  async cloneRunUpToRound(sourceRunId, afterRound) {
+    const source = await this.loadRun(sourceRunId);
+    const newRun = await this.createRunRecord({
+      topic: source.topic,
+      title: source.title ? `${source.title} (branch)` : source.title,
+      rounds: source.rounds,
+      settings: source.settings || {}
+    });
+    newRun.roundMessages = (source.roundMessages || []).filter((r) => r.round <= afterRound);
+    newRun.branchedFrom = { runId: sourceRunId, round: afterRound };
+    newRun._researchContext = source._researchContext || "";
+    return newRun;
   }
 
   async saveExport(runId, markdownText) {

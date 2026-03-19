@@ -60,6 +60,10 @@
             <p class="stages-hint">JSON array with one entry per round. Each: <code>{"name":"...","instruction":"..."}</code></p>
           </details>
 
+          <div id="costEstimate" class="cost-estimate hidden">
+            Estimated cost: <strong><span id="estimatedCost">$0.00</span></strong>
+          </div>
+
           <div class="form-actions">
             <button id="startBtn" type="submit">Start Discussion</button>
             <button id="cancelBtn" type="button" class="cancel-btn hidden" aria-label="Cancel running discussion">Cancel</button>
@@ -87,6 +91,7 @@
         <div id="tokenSummary" class="token-summary hidden">
           Tokens: <strong><span id="tokenTotal">0</span></strong> total
           (<span id="tokenInput">0</span> in / <span id="tokenOutput">0</span> out)
+          <span id="tokenCost"></span>
         </div>
         <div id="roundsContainer" class="rounds" aria-label="Discussion rounds"></div>
         <div id="userInputArea" class="user-input-area hidden">
@@ -98,6 +103,15 @@
           </div>
         </div>
         <article id="finalReport" class="final-report hidden" aria-label="Final report"></article>
+
+        <section id="evaluationPanel" class="evaluation-panel hidden">
+          <h3>Discussion Evaluation</h3>
+          <div id="metricsDisplay" class="metrics-grid"></div>
+          <div id="graphContainer" class="graph-container">
+            <canvas id="graphCanvas" width="800" height="500"></canvas>
+          </div>
+          <div id="graphTooltip" class="graph-tooltip hidden"></div>
+        </section>
       </section>
 
       <section class="panel side-panel" aria-label="History and agent settings">
@@ -140,6 +154,7 @@
       <section class="round-card">
         <header>
           <h3></h3>
+          <button class="branch-btn" type="button" title="Branch from this round">Branch</button>
           <p class="coordinator-line"></p>
         </header>
         <div class="messages"></div>
@@ -151,8 +166,10 @@
         <header>
           <h4></h4>
           <span class="msg-time"></span>
+          <button class="annotate-btn" type="button" title="Add annotation">+Note</button>
         </header>
         <div class="msg-content"></div>
+        <div class="annotations-list"></div>
       </article>
     </template>
 

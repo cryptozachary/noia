@@ -1,3 +1,5 @@
+const { calculateCost, formatCost } = require("./costCalculator");
+
 function buildMarkdownExport(run) {
   const lines = [];
   lines.push(`# ${run.title || run.topic}`);
@@ -10,7 +12,9 @@ function buildMarkdownExport(run) {
 
   const usage = run.metadata && run.metadata.tokenUsage;
   if (usage && usage.total_tokens > 0) {
-    lines.push(`**Tokens:** ${usage.total_tokens} total (${usage.input_tokens} in / ${usage.output_tokens} out)  `);
+    const cost = calculateCost((run.metadata && run.metadata.model) || "", usage);
+    const costStr = cost.totalCost > 0 ? ` | **Cost:** ${formatCost(cost.totalCost)}` : "";
+    lines.push(`**Tokens:** ${usage.total_tokens} total (${usage.input_tokens} in / ${usage.output_tokens} out)${costStr}  `);
   }
 
   lines.push("");
@@ -48,9 +52,12 @@ function buildMarkdownExport(run) {
 function buildHtmlExport(run) {
   const title = escHtml(run.title || run.topic);
   const usage = run.metadata && run.metadata.tokenUsage;
-  const tokenLine = usage && usage.total_tokens > 0
-    ? `<p><strong>Tokens:</strong> ${usage.total_tokens} total (${usage.input_tokens} in / ${usage.output_tokens} out)</p>`
-    : "";
+  let tokenLine = "";
+  if (usage && usage.total_tokens > 0) {
+    const cost = calculateCost((run.metadata && run.metadata.model) || "", usage);
+    const costStr = cost.totalCost > 0 ? ` | <strong>Cost:</strong> ${formatCost(cost.totalCost)}` : "";
+    tokenLine = `<p><strong>Tokens:</strong> ${usage.total_tokens} total (${usage.input_tokens} in / ${usage.output_tokens} out)${costStr}</p>`;
+  }
 
   const roundsHtml = (run.roundMessages || [])
     .map((round) => {

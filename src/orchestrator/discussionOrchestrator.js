@@ -17,15 +17,16 @@ const { createLLMServiceForProvider } = require("../services/llmFactory");
 const { setPaused } = require("./runManager");
 
 class DiscussionOrchestrator {
-  constructor({ store, openaiService, researchService, defaultModel, fullConfig }) {
+  constructor({ store, openaiService, researchService, defaultModel, fullConfig, embeddingService }) {
     this.store = store;
     this.openaiService = openaiService;
     this.researchService = researchService || null;
     this.defaultModel = defaultModel;
     this.fullConfig = fullConfig || null;
+    this.embeddingService = embeddingService || null;
   }
 
-  async runDiscussion({ topic, title, rounds, settings = {}, stages = null, emitter = null, existingRun = null, checkCancelled = null, waitForInput = null }) {
+  async runDiscussion({ topic, title, rounds, settings = {}, stages = null, emitter = null, existingRun = null, checkCancelled = null, waitForInput = null, startRound = 1 }) {
     const medicalTopic = isMedicalTopic(topic);
     const effectiveSettings = {
       model: settings.model || this.defaultModel,
@@ -67,6 +68,26 @@ class DiscussionOrchestrator {
 
       const agentConfigs = await this.loadAllAgentConfigs();
 
+      // Vector memory: replace full memory with relevant chunks if embeddings available
+      if (this.embeddingService && this.embeddingService.isAvailable()) {
+        try {
+          const topicEmbedding = await this.embeddingService.embed(topic);
+          if (topicEmbedding) {
+            for (const [agentId, config] of Object.entries(agentConfigs)) {
+              const embData = await this.store.loadMemoryEmbeddings(agentId);
+              if (embData && embData.chunks && embData.chunks.length > 0) {
+                const relevant = this.embeddingService.searchSimilar(topicEmbedding, embData.chunks, 5);
+                if (relevant.length > 0) {
+                  config.memory = "Relevant memories:\n" + relevant.map((r) => `- ${r.text}`).join("\n");
+                }
+              }
+            }
+          }
+        } catch (embError) {
+          logger.warn("Vector memory retrieval failed, using full memory", { error: embError.message });
+        }
+      }
+
       // RAG: fetch research context before discussion begins
       let researchContext = "";
       if (this.researchService && this.researchService.isAvailable()) {
@@ -77,7 +98,7 @@ class DiscussionOrchestrator {
         if (emitter) emitter.emit("research-complete", { sourceCount: results.length });
       }
 
-      for (let round = 1; round <= rounds; round += 1) {
+      for (let round = startRound; round <= rounds; round += 1) {
         if (checkCancelled && checkCancelled()) {
           run.metadata.status = "cancelled";
           run.metadata.cancelledAt = new Date().toISOString();
@@ -359,6 +380,22 @@ class DiscussionOrchestrator {
         }
       }
 
+      // Post-run evaluation: extract claims, build graph, compute metrics
+      try {
+        if (emitter) emitter.emit("evaluation-start", { runId: run.id });
+        const { extractClaims } = require("../services/claimExtractor");
+        const { buildArgumentGraph, computeMetrics } = require("../services/graphBuilder");
+        const claims = await extractClaims(run, this.openaiService, effectiveSettings);
+        const graph = await buildArgumentGraph(claims, this.openaiService, effectiveSettings);
+        const metrics = computeMetrics(graph, run);
+        run.metadata.argumentGraph = graph;
+        run.metadata.evaluationMetrics = metrics;
+        await this.store.saveRun(run);
+        if (emitter) emitter.emit("evaluation-complete", { metrics, graph });
+      } catch (evalError) {
+        logger.warn("Post-run evaluation failed", { error: evalError.message });
+      }
+
       run.metadata.status = "completed";
       run.metadata.completedAt = new Date().toISOString();
       await this.store.saveRun(run);
@@ -402,6 +439,25 @@ class DiscussionOrchestrator {
         if (newLines) {
           const updated = `${existingMemory.trimEnd()}\n\n## Session: ${run.id}\n${newLines}\n`;
           await this.store.writeAgentMemory(agentId, updated);
+
+          // Reindex embeddings for this agent's memory
+          if (this.embeddingService && this.embeddingService.isAvailable()) {
+            try {
+              const { chunkMemory, truncateEmbedding } = require("../services/embeddingService");
+              const chunks = chunkMemory(updated);
+              if (chunks.length > 0) {
+                const embeddings = await this.embeddingService.embedBatch(chunks);
+                await this.store.saveMemoryEmbeddings(agentId, {
+                  agentId,
+                  model: this.embeddingService.model,
+                  updatedAt: new Date().toISOString(),
+                  chunks: chunks.map((text, i) => ({ text, embedding: truncateEmbedding(embeddings[i]) }))
+                });
+              }
+            } catch (embErr) {
+              logger.warn("Failed to index memory embeddings", { agentId, error: embErr.message });
+            }
+          }
         }
       })
     );

@@ -36,6 +36,9 @@ const config = {
     provider: process.env.SEARCH_PROVIDER || "tavily",
     apiKey: process.env.TAVILY_API_KEY || "",
     maxResults: parseNumber(process.env.SEARCH_MAX_RESULTS, 5)
+  },
+  embedding: {
+    model: process.env.EMBEDDING_MODEL || "text-embedding-3-small"
   }
 };
 

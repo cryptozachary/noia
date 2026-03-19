@@ -1,4 +1,5 @@
 const express = require("express");
+const { randomUUID } = require("crypto");
 const { config } = require("../config");
 const { FileStore } = require("../storage/fileStore");
 const { createLLMService, createLLMServiceForProvider } = require("../services/llmFactory");
@@ -9,18 +10,22 @@ const { AGENTS, getAgent, addAgent, removeAgent, DEFAULT_AGENTS } = require("../
 const { startRun, cancelRun, resumeRun, getPausedState, getRunEmitter, getActiveRunIds } = require("../orchestrator/runManager");
 const { buildMarkdownExport, buildHtmlExport } = require("../services/exportBuilder");
 const { ResearchService } = require("../services/researchService");
+const { calculateCost, estimateRunCost, formatCost } = require("../services/costCalculator");
+const { EmbeddingService, chunkMemory, truncateEmbedding } = require("../services/embeddingService");
 
 const router = express.Router();
 
 const store = new FileStore(config.dataDir);
 const llmService = createLLMService(config);
 const researchService = new ResearchService(config.search);
+const embeddingService = new EmbeddingService({ apiKey: config.openai.apiKey, embeddingModel: config.embedding.model });
 const orchestrator = new DiscussionOrchestrator({
   store,
   openaiService: llmService,
   researchService,
   defaultModel: config.llmProvider === "anthropic" ? config.anthropic.model : config.openai.model,
-  fullConfig: config
+  fullConfig: config,
+  embeddingService
 });
 
 function validatePathParam(value) {
@@ -59,10 +64,20 @@ router.get("/runs/:runId", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
     const run = await store.loadRun(req.params.runId);
-    res.json({ run });
+    const cost = run.metadata ? calculateCost(run.metadata.model, run.metadata.tokenUsage) : null;
+    res.json({ run, cost });
   } catch (error) {
     next(error);
   }
+});
+
+router.get("/cost/estimate", (req, res) => {
+  const model = req.query.model || config.openai.model;
+  const topicLength = parseInt(req.query.topicLength, 10) || 200;
+  const rounds = parseInt(req.query.rounds, 10) || 4;
+  const agentCount = parseInt(req.query.agentCount, 10) || 3;
+  const estimate = estimateRunCost(model, topicLength, rounds, agentCount);
+  res.json({ estimate });
 });
 
 router.post("/discussions", async (req, res, next) => {
@@ -145,6 +160,8 @@ router.get("/discussions/:runId/stream", (req, res) => {
   const onFinalReport = (d) => send("final-report", d);
   const onMemoryUpdateStart = (d) => send("memory-update-start", d);
   const onMemoryUpdateComplete = (d) => send("memory-update-complete", d);
+  const onEvaluationStart = (d) => send("evaluation-start", d);
+  const onEvaluationComplete = (d) => send("evaluation-complete", d);
   const onRunComplete = (d) => { send("run-complete", d); cleanup(); };
   const onRunCancelled = (d) => { send("run-cancelled", d); cleanup(); };
   const onError = (d) => { send("error", d); cleanup(); };
@@ -163,6 +180,8 @@ router.get("/discussions/:runId/stream", (req, res) => {
   emitter.on("final-report", onFinalReport);
   emitter.on("memory-update-start", onMemoryUpdateStart);
   emitter.on("memory-update-complete", onMemoryUpdateComplete);
+  emitter.on("evaluation-start", onEvaluationStart);
+  emitter.on("evaluation-complete", onEvaluationComplete);
   emitter.on("run-complete", onRunComplete);
   emitter.on("run-cancelled", onRunCancelled);
   emitter.on("error", onError);
@@ -191,6 +210,8 @@ router.get("/discussions/:runId/stream", (req, res) => {
     emitter.off("final-report", onFinalReport);
     emitter.off("memory-update-start", onMemoryUpdateStart);
     emitter.off("memory-update-complete", onMemoryUpdateComplete);
+    emitter.off("evaluation-start", onEvaluationStart);
+    emitter.off("evaluation-complete", onEvaluationComplete);
     emitter.off("run-complete", onRunComplete);
     emitter.off("run-cancelled", onRunCancelled);
     emitter.off("error", onError);
@@ -247,6 +268,30 @@ router.put("/agents/:agentId/memory", async (req, res, next) => {
     const memory = typeof req.body.memory === "string" ? req.body.memory : "";
     await store.writeAgentMemory(req.params.agentId, memory);
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/agents/:agentId/reindex-memory", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.agentId);
+    if (!embeddingService.isAvailable()) {
+      throw new AppError("Embedding service not available (no OpenAI API key).", 400);
+    }
+    const memory = await store.readAgentMemory(req.params.agentId);
+    const chunks = chunkMemory(memory);
+    if (chunks.length === 0) {
+      return res.json({ ok: true, chunks: 0 });
+    }
+    const embeddings = await embeddingService.embedBatch(chunks);
+    await store.saveMemoryEmbeddings(req.params.agentId, {
+      agentId: req.params.agentId,
+      model: embeddingService.model,
+      updatedAt: new Date().toISOString(),
+      chunks: chunks.map((text, i) => ({ text, embedding: truncateEmbedding(embeddings[i]) }))
+    });
+    res.json({ ok: true, chunks: chunks.length });
   } catch (error) {
     next(error);
   }
@@ -346,6 +391,130 @@ router.get("/runs/:runId/export/html", async (req, res, next) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${run.id}.html"`);
     res.send(html);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/runs/:runId/branch", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.runId);
+    const afterRound = Number(req.body.round);
+    if (!Number.isInteger(afterRound) || afterRound < 1) {
+      throw new AppError("Valid round number is required.", 400);
+    }
+
+    const sourceRun = await store.loadRun(req.params.runId);
+    const maxRound = Math.max(0, ...(sourceRun.roundMessages || []).map((r) => r.round));
+    if (afterRound > maxRound) {
+      throw new AppError(`Round ${afterRound} does not exist in this run.`, 400);
+    }
+
+    const newRun = await store.cloneRunUpToRound(req.params.runId, afterRound);
+    newRun.metadata = {
+      status: "running",
+      medicalTopic: false,
+      model: (sourceRun.metadata && sourceRun.metadata.model) || config.openai.model,
+      tokenUsage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }
+    };
+    await store.saveRun(newRun);
+
+    const branchSettings = req.body.settings || sourceRun.settings || {};
+
+    startRun(newRun.id, orchestrator, {
+      topic: sourceRun.topic,
+      title: newRun.title,
+      rounds: sourceRun.rounds,
+      settings: branchSettings,
+      existingRun: newRun,
+      startRound: afterRound + 1
+    });
+
+    res.status(202).json({ runId: newRun.id });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/runs/:runId/annotations", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.runId);
+    const data = await store.loadAnnotations(req.params.runId);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/runs/:runId/annotations", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.runId);
+    const text = (req.body.text || "").trim();
+    if (!text) throw new AppError("Annotation text is required.", 400);
+
+    const round = req.body.round;
+    const agentId = req.body.agentId || null;
+    const data = await store.loadAnnotations(req.params.runId);
+    const annotation = {
+      id: `ann-${randomUUID().slice(0, 8)}`,
+      round: round != null ? Number(round) : null,
+      agentId,
+      text,
+      timestamp: new Date().toISOString()
+    };
+    data.annotations.push(annotation);
+    await store.saveAnnotations(req.params.runId, data);
+    res.status(201).json({ annotation });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/runs/:runId/annotations/:annotationId", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.runId);
+    const data = await store.loadAnnotations(req.params.runId);
+    const before = data.annotations.length;
+    data.annotations = data.annotations.filter((a) => a.id !== req.params.annotationId);
+    if (data.annotations.length === before) {
+      return res.status(404).json({ error: "Annotation not found." });
+    }
+    await store.saveAnnotations(req.params.runId, data);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/runs/:runId/evaluation", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.runId);
+    const run = await store.loadRun(req.params.runId);
+    const graph = (run.metadata && run.metadata.argumentGraph) || { nodes: [], edges: [] };
+    const metrics = (run.metadata && run.metadata.evaluationMetrics) || null;
+    res.json({ graph, metrics });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/runs/:runId/evaluate", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.runId);
+    const run = await store.loadRun(req.params.runId);
+    if (!run.metadata || run.metadata.status !== "completed") {
+      throw new AppError("Can only evaluate completed runs.", 400);
+    }
+    const { extractClaims } = require("../services/claimExtractor");
+    const { buildArgumentGraph, computeMetrics } = require("../services/graphBuilder");
+    const override = run.settings || {};
+    const claims = await extractClaims(run, llmService, override);
+    const graph = await buildArgumentGraph(claims, llmService, override);
+    const metrics = computeMetrics(graph, run);
+    run.metadata.argumentGraph = graph;
+    run.metadata.evaluationMetrics = metrics;
+    await store.saveRun(run);
+    res.json({ graph, metrics });
   } catch (error) {
     next(error);
   }

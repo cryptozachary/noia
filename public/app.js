@@ -3,10 +3,47 @@ const state = {
   agents: [],
   liveTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
   activeRunId: null,
-  eventSource: null
+  eventSource: null,
+  currentModel: ""
 };
 
 const streamingCards = new Map();
+
+// --- Cost calculation (client-side, mirrors costCalculator.js) ---
+const PRICING = {
+  "gpt-4.1": { input: 2.00, output: 8.00 },
+  "gpt-4.1-mini": { input: 0.40, output: 1.60 },
+  "gpt-4.1-nano": { input: 0.10, output: 0.40 },
+  "gpt-4o": { input: 2.50, output: 10.00 },
+  "gpt-4o-mini": { input: 0.15, output: 0.60 },
+  "o3": { input: 2.00, output: 8.00 },
+  "o3-mini": { input: 1.10, output: 4.40 },
+  "o4-mini": { input: 1.10, output: 4.40 },
+  "claude-sonnet-4-20250514": { input: 3.00, output: 15.00 },
+  "claude-3-5-sonnet-20241022": { input: 3.00, output: 15.00 },
+  "claude-3-5-haiku-20241022": { input: 0.80, output: 4.00 },
+  "claude-3-opus-20240229": { input: 15.00, output: 75.00 }
+};
+
+function clientCalculateCost(model, usage) {
+  if (!model || !usage) return 0;
+  const key = model.toLowerCase();
+  let pricing = PRICING[key];
+  if (!pricing) {
+    const keys = Object.keys(PRICING).sort((a, b) => b.length - a.length);
+    for (const prefix of keys) {
+      if (key.startsWith(prefix)) { pricing = PRICING[prefix]; break; }
+    }
+  }
+  if (!pricing) return 0;
+  return ((usage.input_tokens || 0) / 1e6) * pricing.input + ((usage.output_tokens || 0) / 1e6) * pricing.output;
+}
+
+function formatCost(cost) {
+  if (!cost || cost === 0) return "";
+  if (cost < 0.01) return `~$${cost.toFixed(4)}`;
+  return `~$${cost.toFixed(2)}`;
+}
 
 const els = {
   statusBadge: document.getElementById("statusBadge"),
@@ -37,10 +74,17 @@ const els = {
   tokenInput: document.getElementById("tokenInput"),
   tokenOutput: document.getElementById("tokenOutput"),
   toastContainer: document.getElementById("toastContainer"),
+  tokenCost: document.getElementById("tokenCost"),
+  costEstimate: document.getElementById("costEstimate"),
+  estimatedCost: document.getElementById("estimatedCost"),
   userInputArea: document.getElementById("userInputArea"),
   userInputText: document.getElementById("userInputText"),
   submitInputBtn: document.getElementById("submitInputBtn"),
-  skipInputBtn: document.getElementById("skipInputBtn")
+  skipInputBtn: document.getElementById("skipInputBtn"),
+  evaluationPanel: document.getElementById("evaluationPanel"),
+  metricsDisplay: document.getElementById("metricsDisplay"),
+  graphCanvas: document.getElementById("graphCanvas"),
+  graphTooltip: document.getElementById("graphTooltip")
 };
 
 init();
@@ -66,6 +110,9 @@ function wireEvents() {
   els.historySearch.addEventListener("input", onHistorySearch);
   els.submitInputBtn.addEventListener("click", onSubmitUserInput);
   els.skipInputBtn.addEventListener("click", onSkipUserInput);
+  els.topicInput.addEventListener("input", updateCostEstimate);
+  els.roundsInput.addEventListener("input", updateCostEstimate);
+  updateCostEstimate();
 }
 
 // --- Item 2: Reconnect after page refresh ---
@@ -108,6 +155,8 @@ async function onCreateRun(event) {
   els.finalReport.classList.add("hidden");
   els.tokenSummary.classList.add("hidden");
   state.liveTokens = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  state.currentModel = "";
+  els.costEstimate.classList.add("hidden");
 
   let stages = null;
   const stagesRaw = (document.getElementById("stagesInput").value || "").trim();
@@ -306,6 +355,20 @@ function connectSSE(runId) {
     } catch { /* SSE error handling */ }
   });
 
+  source.addEventListener("evaluation-start", () => {
+    setStatus("Evaluating discussion...");
+  });
+
+  source.addEventListener("evaluation-complete", (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.metrics) renderMetrics(data.metrics);
+      if (data.graph) renderArgumentGraph(data.graph);
+      els.evaluationPanel.classList.remove("hidden");
+      showToast("Discussion evaluation complete.");
+    } catch { /* SSE error handling */ }
+  });
+
   source.addEventListener("memory-update-start", () => {
     setStatus("Updating agent memories...");
   });
@@ -398,6 +461,122 @@ async function onSkipUserInput() {
   }
 }
 
+async function updateCostEstimate() {
+  const topic = els.topicInput.value.trim();
+  const rounds = Number(els.roundsInput.value || 4);
+  if (!topic) {
+    els.costEstimate.classList.add("hidden");
+    return;
+  }
+  try {
+    const data = await fetchJson(`/api/cost/estimate?topicLength=${topic.length}&rounds=${rounds}&agentCount=3`);
+    if (data.estimate && data.estimate.estimatedCost > 0) {
+      els.estimatedCost.textContent = formatCost(data.estimate.estimatedCost);
+      els.costEstimate.classList.remove("hidden");
+    } else {
+      els.costEstimate.classList.add("hidden");
+    }
+  } catch {
+    els.costEstimate.classList.add("hidden");
+  }
+}
+
+// --- Branching ---
+async function onBranchFromRound(runId, round) {
+  if (state.activeRunId) {
+    showToast("Cannot branch while a discussion is running.", "error");
+    return;
+  }
+  if (!confirm(`Branch from round ${round}? This creates a new discussion continuing from that point.`)) return;
+  try {
+    setStatus("Branching...");
+    const response = await fetchJson(`/api/runs/${encodeURIComponent(runId)}/branch`, {
+      method: "POST",
+      body: JSON.stringify({ round })
+    });
+    const newRunId = response.runId;
+    state.activeRunId = newRunId;
+    setRunningUI(newRunId);
+    connectSSE(newRunId);
+    setFormLocked(true);
+    showToast(`Branched from round ${round}. New run started.`);
+    loadHistory();
+  } catch (error) {
+    setStatus("Idle");
+    showToast(error.message || "Branch failed.", "error");
+  }
+}
+
+function wireBranchBtn(roundCard, runId, round) {
+  const btn = roundCard.querySelector(".branch-btn");
+  if (!btn) return;
+  if (state.activeRunId) btn.disabled = true;
+  btn.addEventListener("click", () => onBranchFromRound(runId, round));
+}
+
+// --- Annotations ---
+function wireAnnotateBtn(msgCard, runId, round, agentId) {
+  const btn = msgCard.querySelector(".annotate-btn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    // Toggle form
+    let form = msgCard.querySelector(".annotation-form");
+    if (form) { form.remove(); return; }
+    form = document.createElement("div");
+    form.className = "annotation-form";
+    form.innerHTML = `<textarea placeholder="Add a note..." rows="2"></textarea><button type="button">Save</button><button type="button">Cancel</button>`;
+    const [saveBtn, cancelBtn] = form.querySelectorAll("button");
+    cancelBtn.addEventListener("click", () => form.remove());
+    saveBtn.addEventListener("click", async () => {
+      const text = form.querySelector("textarea").value.trim();
+      if (!text) return;
+      try {
+        const result = await fetchJson(`/api/runs/${encodeURIComponent(runId)}/annotations`, {
+          method: "POST",
+          body: JSON.stringify({ round, agentId, text })
+        });
+        form.remove();
+        appendAnnotationToCard(msgCard, runId, result.annotation);
+      } catch (error) {
+        showToast(error.message || "Failed to save annotation.", "error");
+      }
+    });
+    msgCard.appendChild(form);
+    form.querySelector("textarea").focus();
+  });
+}
+
+function appendAnnotationToCard(msgCard, runId, ann) {
+  const list = msgCard.querySelector(".annotations-list");
+  if (!list) return;
+  const el = document.createElement("div");
+  el.className = "annotation";
+  el.dataset.annotationId = ann.id;
+  el.innerHTML = `<span class="annotation-text">${escapeHtml(ann.text)}</span><span class="annotation-time">${new Date(ann.timestamp).toLocaleString()}</span><button class="annotation-delete" title="Delete">×</button>`;
+  el.querySelector(".annotation-delete").addEventListener("click", async () => {
+    try {
+      await fetchJson(`/api/runs/${encodeURIComponent(runId)}/annotations/${ann.id}`, { method: "DELETE" });
+      el.remove();
+    } catch (error) {
+      showToast(error.message || "Failed to delete annotation.", "error");
+    }
+  });
+  list.appendChild(el);
+}
+
+async function loadAnnotationsForRun(runId) {
+  try {
+    const data = await fetchJson(`/api/runs/${encodeURIComponent(runId)}/annotations`);
+    const annotations = data.annotations || [];
+    for (const ann of annotations) {
+      const cards = document.querySelectorAll(`.msg-card[data-round="${ann.round}"][data-agent-id="${ann.agentId}"]`);
+      for (const card of cards) {
+        appendAnnotationToCard(card, runId, ann);
+      }
+    }
+  } catch { /* no annotations */ }
+}
+
 // Item 1: Cancel running discussion
 async function onCancelRun() {
   if (!state.activeRunId) return;
@@ -445,11 +624,17 @@ function appendRoundCard(data) {
 function appendMessageToRound(roundCard, data) {
   const fragment = els.messageTemplate.content.cloneNode(true);
   const msgCard = fragment.querySelector(".msg-card");
+  msgCard.dataset.round = data.round || "";
+  msgCard.dataset.agentId = data.agentId || "";
   fragment.querySelector("h4").textContent = data.agentName || data.agentId;
   fragment.querySelector(".msg-time").textContent = new Date(data.timestamp).toLocaleTimeString();
   fragment.querySelector(".msg-content").innerHTML = marked.parse(data.content || "");
   msgCard.classList.add(agentCssClass(data.agentId));
   roundCard.querySelector(".messages").appendChild(fragment);
+  const appended = roundCard.querySelector(".messages").lastElementChild;
+  if (state.currentRun || state.activeRunId) {
+    wireAnnotateBtn(appended, (state.currentRun && state.currentRun.id) || state.activeRunId, data.round, data.agentId);
+  }
   roundCard.scrollIntoView({ behavior: "smooth", block: "end" });
 }
 
@@ -460,10 +645,13 @@ function updateLiveTokens(usage) {
   displayTokens(state.liveTokens);
 }
 
-function displayTokens(usage) {
+function displayTokens(usage, model) {
   els.tokenTotal.textContent = (usage.total_tokens || 0).toLocaleString();
   els.tokenInput.textContent = (usage.input_tokens || 0).toLocaleString();
   els.tokenOutput.textContent = (usage.output_tokens || 0).toLocaleString();
+  const costModel = model || state.currentModel || "";
+  const cost = clientCalculateCost(costModel, usage);
+  els.tokenCost.textContent = cost > 0 ? ` | Cost: ${formatCost(cost)}` : "";
   els.tokenSummary.classList.remove("hidden");
 }
 
@@ -483,9 +671,11 @@ function renderHistory(runs) {
     item.type = "button";
     item.className = "history-item";
     item.setAttribute("role", "listitem");
+    const branchInfo = run.branchedFrom ? `<span class="branch-indicator">branched from round ${run.branchedFrom.round}</span>` : "";
     item.innerHTML = `
       <h4>${escapeHtml(run.title || run.topic)}</h4>
       <p>${escapeHtml(run.id)} | ${escapeHtml(run.status)} | ${new Date(run.createdAt).toLocaleString()}</p>
+      ${branchInfo}
     `;
 
     item.addEventListener("click", async () => {
@@ -662,7 +852,11 @@ function renderRun(run) {
       msgFrag.querySelector(".msg-time").textContent = new Date(message.timestamp).toLocaleTimeString();
       msgFrag.querySelector(".msg-content").innerHTML = marked.parse(message.content || "");
       msgCard.classList.add(agentCssClass(message.agentId));
+      msgCard.dataset.round = round.round;
+      msgCard.dataset.agentId = message.agentId;
       messagesHost.appendChild(msgFrag);
+      const appendedMsg = messagesHost.lastElementChild;
+      wireAnnotateBtn(appendedMsg, run.id, round.round, message.agentId);
     }
 
     if (!(round.messages || []).length) {
@@ -672,14 +866,13 @@ function renderRun(run) {
     }
 
     els.roundsContainer.appendChild(fragment);
+    const appendedRound = els.roundsContainer.lastElementChild;
+    wireBranchBtn(appendedRound, run.id, round.round);
   }
 
   const usage = run.metadata && run.metadata.tokenUsage;
   if (usage && usage.total_tokens > 0) {
-    els.tokenTotal.textContent = usage.total_tokens.toLocaleString();
-    els.tokenInput.textContent = usage.input_tokens.toLocaleString();
-    els.tokenOutput.textContent = usage.output_tokens.toLocaleString();
-    els.tokenSummary.classList.remove("hidden");
+    displayTokens(usage, run.metadata.model);
   } else {
     els.tokenSummary.classList.add("hidden");
   }
@@ -688,6 +881,17 @@ function renderRun(run) {
   els.finalReport.innerHTML = finalText ? marked.parse(finalText) : "";
   els.finalReport.classList.toggle("hidden", !finalText);
   toggleRunButtons(Boolean(finalText));
+
+  // Evaluation panel
+  if (run.metadata && run.metadata.evaluationMetrics) {
+    renderMetrics(run.metadata.evaluationMetrics);
+    if (run.metadata.argumentGraph) renderArgumentGraph(run.metadata.argumentGraph);
+    els.evaluationPanel.classList.remove("hidden");
+  } else {
+    els.evaluationPanel.classList.add("hidden");
+  }
+
+  loadAnnotationsForRun(run.id);
 }
 
 function toggleRunButtons(enabled) {
@@ -769,4 +973,167 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+// --- Evaluation Rendering ---
+function renderMetrics(metrics) {
+  const items = [
+    { label: "Consensus", value: metrics.consensusScore, pct: true },
+    { label: "Evidence Density", value: metrics.evidenceDensity, pct: true },
+    { label: "Claim Diversity", value: metrics.claimDiversity, pct: true },
+    { label: "Convergence", value: metrics.convergenceRate, pct: true },
+    { label: "Total Claims", value: metrics.totalClaims, pct: false },
+    { label: "Total Edges", value: metrics.totalEdges, pct: false }
+  ];
+  els.metricsDisplay.innerHTML = items.map((m) => {
+    const display = m.pct ? `${Math.round(m.value * 100)}%` : String(m.value);
+    const bar = m.pct
+      ? `<div class="metric-bar"><div class="metric-bar-fill" style="width:${Math.round(m.value * 100)}%"></div></div>`
+      : "";
+    return `<div class="metric-card"><div class="metric-label">${escapeHtml(m.label)}</div><div class="metric-value">${display}</div>${bar}</div>`;
+  }).join("");
+}
+
+function renderArgumentGraph(graph) {
+  const canvas = els.graphCanvas;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const nodes = (graph.nodes || []).slice(0, 50);
+  const edges = graph.edges || [];
+  if (nodes.length === 0) { ctx.clearRect(0, 0, W, H); return; }
+
+  // Assign colors by agent
+  const agentColors = {};
+  const palette = ["#1f7a5a", "#97410e", "#425bb3", "#585068", "#6b7280", "#0e5a7a", "#8b5cf6", "#d97706"];
+  let ci = 0;
+  for (const n of nodes) {
+    if (!agentColors[n.agentId]) agentColors[n.agentId] = palette[ci++ % palette.length];
+  }
+
+  // Initialize positions randomly
+  const sim = nodes.map((n, i) => ({
+    ...n,
+    x: W * 0.2 + Math.random() * W * 0.6,
+    y: H * 0.2 + Math.random() * H * 0.6,
+    vx: 0, vy: 0,
+    idx: i
+  }));
+  const idMap = {};
+  sim.forEach((n, i) => { idMap[n.id] = i; });
+
+  // Simple force simulation
+  const ITERATIONS = 120;
+  for (let iter = 0; iter < ITERATIONS; iter++) {
+    const alpha = 1 - iter / ITERATIONS;
+    // Repulsion between all nodes
+    for (let i = 0; i < sim.length; i++) {
+      for (let j = i + 1; j < sim.length; j++) {
+        let dx = sim[j].x - sim[i].x;
+        let dy = sim[j].y - sim[i].y;
+        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const force = (800 * alpha) / (dist * dist);
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        sim[i].vx -= fx; sim[i].vy -= fy;
+        sim[j].vx += fx; sim[j].vy += fy;
+      }
+    }
+    // Edge attraction
+    for (const edge of edges) {
+      const si = idMap[edge.source];
+      const ti = idMap[edge.target];
+      if (si === undefined || ti === undefined) continue;
+      let dx = sim[ti].x - sim[si].x;
+      let dy = sim[ti].y - sim[si].y;
+      let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const force = (dist - 80) * 0.02 * alpha;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      sim[si].vx += fx; sim[si].vy += fy;
+      sim[ti].vx -= fx; sim[ti].vy -= fy;
+    }
+    // Gravity toward center
+    for (const n of sim) {
+      n.vx += (W / 2 - n.x) * 0.005 * alpha;
+      n.vy += (H / 2 - n.y) * 0.005 * alpha;
+    }
+    // Apply velocity with damping
+    for (const n of sim) {
+      n.vx *= 0.6; n.vy *= 0.6;
+      n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(20, Math.min(W - 20, n.x));
+      n.y = Math.max(20, Math.min(H - 20, n.y));
+    }
+  }
+
+  // Draw
+  ctx.clearRect(0, 0, W, H);
+
+  // Edges
+  const edgeColors = { supports: "#22c55e", contradicts: "#ef4444", extends: "#3b82f6" };
+  for (const edge of edges) {
+    const si = idMap[edge.source];
+    const ti = idMap[edge.target];
+    if (si === undefined || ti === undefined) continue;
+    ctx.beginPath();
+    ctx.moveTo(sim[si].x, sim[si].y);
+    ctx.lineTo(sim[ti].x, sim[ti].y);
+    ctx.strokeStyle = edgeColors[edge.type] || "#999";
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Nodes
+  const confRadius = { high: 10, medium: 7, low: 5 };
+  for (const n of sim) {
+    const r = confRadius[n.confidence] || 7;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = agentColors[n.agentId] || "#6b7280";
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Legend
+  ctx.font = "11px sans-serif";
+  let lx = 10, ly = H - 10;
+  for (const [type, color] of Object.entries(edgeColors)) {
+    ctx.beginPath(); ctx.moveTo(lx, ly - 4); ctx.lineTo(lx + 18, ly - 4);
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#333"; ctx.fillText(type, lx + 22, ly);
+    lx += ctx.measureText(type).width + 36;
+  }
+
+  // Store sim for tooltip
+  canvas._simNodes = sim;
+  canvas._agentColors = agentColors;
+
+  // Hover tooltip
+  canvas.onmousemove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
+    const mx = (e.clientX - rect.left) * scaleX;
+    const my = (e.clientY - rect.top) * scaleY;
+    let hit = null;
+    for (const n of canvas._simNodes) {
+      const dx = mx - n.x, dy = my - n.y;
+      if (dx * dx + dy * dy < 144) { hit = n; break; }
+    }
+    if (hit) {
+      els.graphTooltip.textContent = `[${hit.type}] ${hit.text}`;
+      els.graphTooltip.style.left = `${e.clientX - canvas.parentElement.getBoundingClientRect().left + 12}px`;
+      els.graphTooltip.style.top = `${e.clientY - canvas.parentElement.getBoundingClientRect().top - 20}px`;
+      els.graphTooltip.classList.remove("hidden");
+    } else {
+      els.graphTooltip.classList.add("hidden");
+    }
+  };
+  canvas.onmouseleave = () => els.graphTooltip.classList.add("hidden");
 }
