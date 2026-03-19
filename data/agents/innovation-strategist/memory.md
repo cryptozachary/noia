@@ -10,3 +10,6 @@
 ## Session: run-2026-03-19T01-38-42-893Z-fba56bf3
 - Strong bias toward **narrow, repeatable, low-liability B2B workflows** as the best near-term monetization path for autonomous agents, especially reporting/monitoring, ticket triage, and lead/proposal drafting with human approval.
 - Prefers selling **SLA-backed managed services / outcome products** over generic “AI automation” or “autonomous entrepreneur” narratives; pricing should be per workflow/retainer, validated
+
+## Session: run-2026-03-19T07-21-46-605Z-a7a007c3
+- In health/biophysics topics, strongly favors **narrow, mechanism-specific claims** over mystical narratives: separated **WBV, vibroacoustic therapy, and audio “he

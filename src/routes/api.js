@@ -47,6 +47,28 @@ router.get("/runs", async (_req, res, next) => {
   }
 });
 
+router.get("/runs/compare", async (req, res, next) => {
+  try {
+    const idA = req.query.a;
+    const idB = req.query.b;
+    if (!idA || !idB) throw new AppError("Both run IDs (a, b) are required.", 400);
+    validatePathParam(idA);
+    validatePathParam(idB);
+    const [runA, runB] = await Promise.all([store.loadRun(idA), store.loadRun(idB)]);
+    let divergenceRound = null;
+    if (runA.branchedFrom && runA.branchedFrom.runId === idB) {
+      divergenceRound = runA.branchedFrom.round;
+    } else if (runB.branchedFrom && runB.branchedFrom.runId === idA) {
+      divergenceRound = runB.branchedFrom.round;
+    }
+    const costA = runA.metadata ? calculateCost(runA.metadata.model, runA.metadata.tokenUsage) : null;
+    const costB = runB.metadata ? calculateCost(runB.metadata.model, runB.metadata.tokenUsage) : null;
+    res.json({ runA: { run: runA, cost: costA }, runB: { run: runB, cost: costB }, divergenceRound });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.delete("/runs/:runId", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
@@ -160,6 +182,8 @@ router.get("/discussions/:runId/stream", (req, res) => {
   const onFinalReport = (d) => send("final-report", d);
   const onMemoryUpdateStart = (d) => send("memory-update-start", d);
   const onMemoryUpdateComplete = (d) => send("memory-update-complete", d);
+  const onCompressionStart = (d) => send("compression-start", d);
+  const onCompressionComplete = (d) => send("compression-complete", d);
   const onEvaluationStart = (d) => send("evaluation-start", d);
   const onEvaluationComplete = (d) => send("evaluation-complete", d);
   const onRunComplete = (d) => { send("run-complete", d); cleanup(); };
@@ -180,6 +204,8 @@ router.get("/discussions/:runId/stream", (req, res) => {
   emitter.on("final-report", onFinalReport);
   emitter.on("memory-update-start", onMemoryUpdateStart);
   emitter.on("memory-update-complete", onMemoryUpdateComplete);
+  emitter.on("compression-start", onCompressionStart);
+  emitter.on("compression-complete", onCompressionComplete);
   emitter.on("evaluation-start", onEvaluationStart);
   emitter.on("evaluation-complete", onEvaluationComplete);
   emitter.on("run-complete", onRunComplete);
@@ -210,6 +236,8 @@ router.get("/discussions/:runId/stream", (req, res) => {
     emitter.off("final-report", onFinalReport);
     emitter.off("memory-update-start", onMemoryUpdateStart);
     emitter.off("memory-update-complete", onMemoryUpdateComplete);
+    emitter.off("compression-start", onCompressionStart);
+    emitter.off("compression-complete", onCompressionComplete);
     emitter.off("evaluation-start", onEvaluationStart);
     emitter.off("evaluation-complete", onEvaluationComplete);
     emitter.off("run-complete", onRunComplete);
@@ -268,6 +296,19 @@ router.put("/agents/:agentId/memory", async (req, res, next) => {
     const memory = typeof req.body.memory === "string" ? req.body.memory : "";
     await store.writeAgentMemory(req.params.agentId, memory);
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/agents/:agentId/insights", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.agentId);
+    const { analyzeMemory } = require("../services/memoryAnalyzer");
+    const memory = await store.readAgentMemory(req.params.agentId);
+    const insights = analyzeMemory(memory);
+    insights.sessionCount = await store.countAgentSessions(req.params.agentId);
+    res.json({ agentId: req.params.agentId, insights });
   } catch (error) {
     next(error);
   }
@@ -515,6 +556,42 @@ router.post("/runs/:runId/evaluate", async (req, res, next) => {
     run.metadata.evaluationMetrics = metrics;
     await store.saveRun(run);
     res.json({ graph, metrics });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/templates", async (_req, res, next) => {
+  try {
+    const templates = await store.listTemplates();
+    res.json({ templates });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/templates", async (req, res, next) => {
+  try {
+    const name = (req.body.name || "").trim();
+    if (!name) throw new AppError("Template name is required.", 400);
+    const template = await store.saveTemplate({
+      name,
+      topic: req.body.topic || "",
+      rounds: req.body.rounds || 4,
+      stages: req.body.stages || null,
+      settings: req.body.settings || {}
+    });
+    res.status(201).json({ template });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/templates/:templateId", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.templateId);
+    await store.deleteTemplate(req.params.templateId);
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }

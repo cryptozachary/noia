@@ -4,7 +4,8 @@ const state = {
   liveTokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
   activeRunId: null,
   eventSource: null,
-  currentModel: ""
+  currentModel: "",
+  compareRunId: null
 };
 
 const streamingCards = new Map();
@@ -81,17 +82,26 @@ const els = {
   userInputText: document.getElementById("userInputText"),
   submitInputBtn: document.getElementById("submitInputBtn"),
   skipInputBtn: document.getElementById("skipInputBtn"),
+  templateSelect: document.getElementById("templateSelect"),
+  saveTemplateBtn: document.getElementById("saveTemplateBtn"),
+  deleteTemplateBtn: document.getElementById("deleteTemplateBtn"),
   evaluationPanel: document.getElementById("evaluationPanel"),
   metricsDisplay: document.getElementById("metricsDisplay"),
   graphCanvas: document.getElementById("graphCanvas"),
-  graphTooltip: document.getElementById("graphTooltip")
+  graphTooltip: document.getElementById("graphTooltip"),
+  agentInsights: document.getElementById("agentInsights"),
+  compareOverlay: document.getElementById("compareOverlay"),
+  closeCompareBtn: document.getElementById("closeCompareBtn"),
+  compareDivergence: document.getElementById("compareDivergence"),
+  compareColA: document.getElementById("compareColA"),
+  compareColB: document.getElementById("compareColB")
 };
 
 init();
 
 async function init() {
   setStatus("Loading");
-  await Promise.all([loadHistory(), loadAgents()]);
+  await Promise.all([loadHistory(), loadAgents(), loadTemplates()]);
   wireEvents();
   await checkActiveRuns();
   setStatus("Idle");
@@ -112,6 +122,10 @@ function wireEvents() {
   els.skipInputBtn.addEventListener("click", onSkipUserInput);
   els.topicInput.addEventListener("input", updateCostEstimate);
   els.roundsInput.addEventListener("input", updateCostEstimate);
+  els.closeCompareBtn.addEventListener("click", () => els.compareOverlay.classList.add("hidden"));
+  els.saveTemplateBtn.addEventListener("click", onSaveTemplate);
+  els.templateSelect.addEventListener("change", onLoadTemplate);
+  els.deleteTemplateBtn.addEventListener("click", onDeleteTemplate);
   updateCostEstimate();
 }
 
@@ -355,6 +369,14 @@ function connectSSE(runId) {
     } catch { /* SSE error handling */ }
   });
 
+  source.addEventListener("compression-start", () => {
+    setStatus("Compressing context...");
+  });
+
+  source.addEventListener("compression-complete", () => {
+    showToast("Context compressed.");
+  });
+
   source.addEventListener("evaluation-start", () => {
     setStatus("Evaluating discussion...");
   });
@@ -478,6 +500,89 @@ async function updateCostEstimate() {
     }
   } catch {
     els.costEstimate.classList.add("hidden");
+  }
+}
+
+// --- Templates ---
+let _templates = [];
+
+async function loadTemplates() {
+  try {
+    const data = await fetchJson("/api/templates");
+    _templates = data.templates || [];
+    els.templateSelect.innerHTML = '<option value="">-- Load Template --</option>';
+    for (const tmpl of _templates) {
+      const opt = document.createElement("option");
+      opt.value = tmpl.id;
+      opt.textContent = tmpl.name;
+      els.templateSelect.appendChild(opt);
+    }
+    els.deleteTemplateBtn.classList.add("hidden");
+  } catch { /* no templates */ }
+}
+
+async function onSaveTemplate() {
+  const name = prompt("Template name:");
+  if (!name || !name.trim()) return;
+  const stagesRaw = (document.getElementById("stagesInput").value || "").trim();
+  let stages = null;
+  if (stagesRaw) {
+    try { stages = JSON.parse(stagesRaw); } catch { /* ignore */ }
+  }
+  try {
+    await fetchJson("/api/templates", {
+      method: "POST",
+      body: JSON.stringify({
+        name: name.trim(),
+        topic: els.topicInput.value.trim(),
+        rounds: Number(els.roundsInput.value || 4),
+        stages,
+        settings: {
+          autoMemory: document.getElementById("autoMemoryCheck").checked,
+          webSearch: document.getElementById("webSearchCheck").checked,
+          interactive: document.getElementById("interactiveCheck").checked
+        }
+      })
+    });
+    showToast("Template saved.");
+    await loadTemplates();
+  } catch (error) {
+    showToast(error.message || "Failed to save template.", "error");
+  }
+}
+
+function onLoadTemplate() {
+  const id = els.templateSelect.value;
+  if (!id) {
+    els.deleteTemplateBtn.classList.add("hidden");
+    return;
+  }
+  const tmpl = _templates.find((t) => t.id === id);
+  if (!tmpl) return;
+  els.topicInput.value = tmpl.topic || "";
+  els.roundsInput.value = tmpl.rounds || 4;
+  els.titleInput.value = "";
+  document.getElementById("stagesInput").value = tmpl.stages ? JSON.stringify(tmpl.stages, null, 2) : "";
+  if (tmpl.settings) {
+    document.getElementById("autoMemoryCheck").checked = tmpl.settings.autoMemory !== false;
+    document.getElementById("webSearchCheck").checked = tmpl.settings.webSearch === true;
+    document.getElementById("interactiveCheck").checked = tmpl.settings.interactive === true;
+  }
+  els.deleteTemplateBtn.classList.remove("hidden");
+  updateCostEstimate();
+}
+
+async function onDeleteTemplate() {
+  const id = els.templateSelect.value;
+  if (!id) return;
+  const tmpl = _templates.find((t) => t.id === id);
+  if (!confirm(`Delete template "${tmpl ? tmpl.name : id}"?`)) return;
+  try {
+    await fetchJson(`/api/templates/${encodeURIComponent(id)}`, { method: "DELETE" });
+    showToast("Template deleted.");
+    await loadTemplates();
+  } catch (error) {
+    showToast(error.message || "Failed to delete template.", "error");
   }
 }
 
@@ -708,6 +813,16 @@ function renderHistory(runs) {
     });
     item.appendChild(deleteBtn);
 
+    const compareBtn = document.createElement("button");
+    compareBtn.type = "button";
+    compareBtn.className = "compare-run-btn";
+    compareBtn.textContent = state.compareRunId && state.compareRunId !== run.id ? "Compare" : "Select";
+    compareBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onCompareClick(run.id);
+    });
+    item.appendChild(compareBtn);
+
     els.historyList.appendChild(item);
   }
 
@@ -746,6 +861,7 @@ async function loadAgents() {
 
   if (state.agents.length) {
     els.memoryEditor.value = state.agents[0].memory || "";
+    loadAgentInsights(state.agents[0].id);
   }
 }
 
@@ -758,6 +874,24 @@ async function onAgentChange() {
     els.agentModelInput.value = (data.agent && data.agent.config && data.agent.config.model) || "";
   } catch {
     els.agentModelInput.value = "";
+  }
+  loadAgentInsights(agentId);
+}
+
+async function loadAgentInsights(agentId) {
+  try {
+    const data = await fetchJson(`/api/agents/${encodeURIComponent(agentId)}/insights`);
+    const ins = data.insights;
+    const sizeDisplay = ins.totalSize < 1024 ? `${ins.totalSize} B` : `${(ins.totalSize / 1024).toFixed(1)} KB`;
+    els.agentInsights.innerHTML = `
+      <div class="insight-row"><span>Memory Size</span><strong>${sizeDisplay}</strong></div>
+      <div class="insight-row"><span>Sections</span><strong>${ins.sectionCount}</strong></div>
+      <div class="insight-row"><span>Discussions</span><strong>${ins.sessionCount}</strong></div>
+      <div class="insight-row"><span>Topics</span><strong>${escapeHtml((ins.topicKeywords || []).slice(0, 5).join(", ") || "None")}</strong></div>
+    `;
+    els.agentInsights.classList.remove("hidden");
+  } catch {
+    els.agentInsights.classList.add("hidden");
   }
 }
 
@@ -964,6 +1098,76 @@ function agentCssClass(agentId) {
     "innovation-strategist": "innov"
   };
   return map[agentId] || "custom";
+}
+
+// --- Run Comparison ---
+async function onCompareClick(runId) {
+  if (!state.compareRunId) {
+    state.compareRunId = runId;
+    showToast("Run selected. Click 'Compare' on another run.");
+    renderHistory(_historyRuns);
+    return;
+  }
+  if (state.compareRunId === runId) {
+    state.compareRunId = null;
+    renderHistory(_historyRuns);
+    return;
+  }
+  try {
+    setStatus("Comparing...");
+    const data = await fetchJson(`/api/runs/compare?a=${encodeURIComponent(state.compareRunId)}&b=${encodeURIComponent(runId)}`);
+    renderComparison(data);
+    state.compareRunId = null;
+    renderHistory(_historyRuns);
+  } catch (error) {
+    showToast(error.message || "Comparison failed.", "error");
+  } finally {
+    setStatus("Idle");
+  }
+}
+
+function renderComparison(data) {
+  const { runA, runB, divergenceRound } = data;
+  if (divergenceRound !== null) {
+    els.compareDivergence.innerHTML = `<p>Runs diverged after <strong>round ${divergenceRound}</strong></p>`;
+  } else {
+    els.compareDivergence.innerHTML = `<p>These runs are independent (no branch relationship).</p>`;
+  }
+  els.compareColA.innerHTML = renderCompareColumn(runA.run, runA.cost);
+  els.compareColB.innerHTML = renderCompareColumn(runB.run, runB.cost);
+  els.compareOverlay.classList.remove("hidden");
+}
+
+function renderCompareColumn(run, cost) {
+  const metrics = run.metadata && run.metadata.evaluationMetrics;
+  const metricsHtml = metrics ? renderCompareMetrics(metrics) : "<p>No evaluation metrics.</p>";
+  const finalHtml = run.finalReport ? marked.parse(run.finalReport) : "<p>No final report.</p>";
+  const costStr = cost ? formatCost(cost.totalCost || cost) : "N/A";
+  return `
+    <h3>${escapeHtml(run.title || run.topic)}</h3>
+    <p class="compare-meta">${escapeHtml(run.id)}</p>
+    <p class="compare-meta">Status: ${escapeHtml(run.metadata ? run.metadata.status : "unknown")} | Cost: ${costStr}</p>
+    <h4>Metrics</h4>
+    ${metricsHtml}
+    <h4>Final Report</h4>
+    <div class="compare-report">${finalHtml}</div>
+  `;
+}
+
+function renderCompareMetrics(metrics) {
+  const items = [
+    { label: "Consensus", value: metrics.consensusScore },
+    { label: "Evidence Density", value: metrics.evidenceDensity },
+    { label: "Diversity", value: metrics.claimDiversity },
+    { label: "Convergence", value: metrics.convergenceRate },
+    { label: "Claims", value: metrics.totalClaims, raw: true },
+    { label: "Edges", value: metrics.totalEdges, raw: true }
+  ];
+  return `<div class="compare-metrics">${items.map((m) => {
+    const display = m.raw ? m.value : `${Math.round(m.value * 100)}%`;
+    const bar = m.raw ? "" : `<div class="metric-bar"><div class="metric-bar-fill" style="width:${Math.round(m.value * 100)}%"></div></div>`;
+    return `<div class="compare-metric"><span>${m.label}</span><strong>${display}</strong>${bar}</div>`;
+  }).join("")}</div>`;
 }
 
 function escapeHtml(value) {

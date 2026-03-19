@@ -12,3 +12,6 @@
 ## Session: run-2026-03-19T01-38-42-893Z-fba56bf3
 - Preferred OpenClaw use cases ranked: competitor/market monitoring + recurring reporting first, then inbound lead enrichment/proposal drafting with human send approval, then support ticket triage/draft responses.
 - Rejected “autonomous entrepreneur,” self-improving, and passive-income narratives as speculative without repeatable economics
+
+## Session: run-2026-03-19T07-21-46-605Z-a7a007c3
+- On sound/vibration claims, consistently narrowed broad “healing frequencies” rhetoric into modality-specific buckets: WBV (strongest evidence), VAT/sound-based adjuncts (plausible but weaker), and 432/528 Hz or organ/chakra tuning claims (spec

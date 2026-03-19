@@ -11,6 +11,7 @@ class FileStore {
     this.agentsDir = path.join(this.baseDir, "agents");
     this.exportsDir = path.join(this.baseDir, "exports");
     this.topicsDir = path.join(this.baseDir, "topics");
+    this.templatesDir = path.join(this.baseDir, "templates");
     this._runIndexCache = null;
     this._runIndexDirty = true;
   }
@@ -243,6 +244,59 @@ class FileStore {
     const filePath = path.join(this.exportsDir, `${runId}.md`);
     await this.writeText(filePath, markdownText);
     return filePath;
+  }
+
+  async listTemplates() {
+    try {
+      const entries = await fs.readdir(this.templatesDir, { withFileTypes: true });
+      const templates = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        try {
+          const tmpl = await this.readJson(path.join(this.templatesDir, entry.name), null);
+          if (tmpl && tmpl.id) templates.push(tmpl);
+        } catch { /* skip malformed */ }
+      }
+      templates.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return templates;
+    } catch {
+      return [];
+    }
+  }
+
+  async loadTemplate(templateId) {
+    const tmpl = await this.readJson(path.join(this.templatesDir, `${templateId}.json`), null);
+    if (!tmpl) throw new AppError(`Template not found: ${templateId}`, 404);
+    return tmpl;
+  }
+
+  async saveTemplate({ name, topic, rounds, stages, settings }) {
+    const id = `tmpl-${randomUUID().slice(0, 8)}`;
+    const data = {
+      id,
+      name: name || "Untitled",
+      topic: topic || "",
+      rounds: rounds || 4,
+      stages: stages || null,
+      settings: settings || {},
+      createdAt: new Date().toISOString()
+    };
+    await this.writeJson(path.join(this.templatesDir, `${id}.json`), data);
+    return data;
+  }
+
+  async deleteTemplate(templateId) {
+    await fs.unlink(path.join(this.templatesDir, `${templateId}.json`)).catch(() => {});
+  }
+
+  async countAgentSessions(agentId) {
+    const sessionsDir = path.join(this.agentsDir, agentId, "sessions");
+    try {
+      const entries = await fs.readdir(sessionsDir);
+      return entries.filter((e) => e.endsWith(".json")).length;
+    } catch {
+      return 0;
+    }
   }
 }
 

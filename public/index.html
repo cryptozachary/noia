@@ -64,6 +64,17 @@
             Estimated cost: <strong><span id="estimatedCost">$0.00</span></strong>
           </div>
 
+          <div class="template-section">
+            <div class="template-header">
+              <label>Templates</label>
+              <button id="saveTemplateBtn" type="button">Save as Template</button>
+            </div>
+            <select id="templateSelect">
+              <option value="">-- Load Template --</option>
+            </select>
+            <button id="deleteTemplateBtn" type="button" class="delete-template-btn hidden">Delete</button>
+          </div>
+
           <div class="form-actions">
             <button id="startBtn" type="submit">Start Discussion</button>
             <button id="cancelBtn" type="button" class="cancel-btn hidden" aria-label="Cancel running discussion">Cancel</button>
@@ -126,6 +137,7 @@
         <select id="agentSelect"></select>
         <textarea id="memoryEditor" rows="12"></textarea>
         <button id="saveMemoryBtn">Save Memory</button>
+        <div id="agentInsights" class="agent-insights hidden"></div>
 
         <label>Model Override (blank = default)</label>
         <input id="agentModelInput" type="text" placeholder="e.g., gpt-4.1-mini" />
@@ -149,6 +161,20 @@
         </form>
       </section>
     </main>
+
+    <div id="compareOverlay" class="compare-overlay hidden">
+      <div class="compare-container">
+        <div class="compare-header">
+          <h2>Run Comparison</h2>
+          <button id="closeCompareBtn" type="button">Close</button>
+        </div>
+        <div id="compareDivergence" class="compare-divergence"></div>
+        <div class="compare-columns">
+          <div id="compareColA" class="compare-col"></div>
+          <div id="compareColB" class="compare-col"></div>
+        </div>
+      </div>
+    </div>
 
     <template id="roundTemplate">
       <section class="round-card">

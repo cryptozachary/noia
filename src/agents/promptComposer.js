@@ -37,7 +37,26 @@ function buildStageInstruction(stage) {
   return "Respond with scientifically grounded analysis.";
 }
 
-function composeScientistPrompt({ agentId, topic, roundNumber, stage, peerMessages, researchContext = "", stageInstruction = "", userInput = "" }) {
+function formatPeerContext(peerContext) {
+  const parts = [];
+  if (peerContext.summary) {
+    parts.push("Summary of prior discussion rounds:", peerContext.summary);
+  }
+  if (peerContext.recentMessages && peerContext.recentMessages.length > 0) {
+    parts.push(
+      "Recent peer messages:",
+      peerContext.recentMessages
+        .map((msg) => `- [${msg.agentName}] Round ${msg.round}:\n${msg.content}`)
+        .join("\n\n")
+    );
+  }
+  if (parts.length === 0) {
+    return "No peer messages yet.";
+  }
+  return parts.join("\n\n");
+}
+
+function composeScientistPrompt({ agentId, topic, roundNumber, stage, peerMessages, peerContext, researchContext = "", stageInstruction = "", userInput = "" }) {
   const agent = getAgent(agentId);
 
   const parts = [
@@ -63,7 +82,7 @@ function composeScientistPrompt({ agentId, topic, roundNumber, stage, peerMessag
     "Revised View:",
     "Keep content concise and specific.",
     "Peer context:",
-    formatPeerMessages(peerMessages)
+    peerContext ? formatPeerContext(peerContext) : formatPeerMessages(peerMessages)
   );
 
   if (userInput) {
@@ -107,5 +126,6 @@ function composeCoordinatorFinalPrompt({ topic, discussionText, isMedicalTopic, 
 
 module.exports = {
   composeScientistPrompt,
-  composeCoordinatorFinalPrompt
+  composeCoordinatorFinalPrompt,
+  formatPeerContext
 };

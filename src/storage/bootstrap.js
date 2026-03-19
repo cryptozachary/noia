@@ -81,7 +81,8 @@ async function ensureBootstrap() {
     path.join(config.dataDir, "agents"),
     path.join(config.dataDir, "runs"),
     path.join(config.dataDir, "exports"),
-    path.join(config.dataDir, "topics")
+    path.join(config.dataDir, "topics"),
+    path.join(config.dataDir, "templates")
   ];
 
   for (const dir of baseDirs) {

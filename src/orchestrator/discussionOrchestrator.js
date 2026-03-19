@@ -48,6 +48,8 @@ class DiscussionOrchestrator {
       model: effectiveSettings.model,
       tokenUsage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }
     };
+    if (!run.roundSummaries) run.roundSummaries = {};
+    const compressionEnabled = settings.contextCompression !== false && rounds > 3;
 
     await this.store.saveRun(run);
 
@@ -221,14 +223,15 @@ class DiscussionOrchestrator {
         const agentPromises = getScientistAgentIds().map(async (agentId) => {
           try {
             const config = agentConfigs[agentId];
-            const peerMessages = collectPeerMessages(run.roundMessages, agentId);
+            const peerContext = collectPeerMessages(run.roundMessages, agentId, compressionEnabled ? (run.roundSummaries || {}) : {});
 
             const userPrompt = composeScientistPrompt({
               agentId,
               topic,
               roundNumber: round,
               stage,
-              peerMessages,
+              peerMessages: peerContext.summary ? undefined : peerContext.recentMessages,
+              peerContext: peerContext.summary ? peerContext : undefined,
               researchContext: run._researchContext || "",
               stageInstruction: customInstruction,
               userInput: run._userInput || ""
@@ -345,6 +348,19 @@ class DiscussionOrchestrator {
         run.roundMessages.push(roundRecord);
         await this.store.saveRun(run);
         if (emitter) emitter.emit("round-complete", { round });
+
+        // Context compression: summarize prior rounds to reduce prompt size
+        if (compressionEnabled && round >= 2) {
+          try {
+            if (emitter) emitter.emit("compression-start", { round });
+            const summaryText = await this.generateRoundSummary(run, round, effectiveSettings);
+            run.roundSummaries[round] = summaryText;
+            await this.store.saveRun(run);
+            if (emitter) emitter.emit("compression-complete", { round });
+          } catch (compError) {
+            logger.warn("Context compression failed, using raw messages", { round, error: compError.message });
+          }
+        }
 
         // Interactive pause: wait for user input before next round
         const shouldPause = settings.interactive === true && round < rounds && stage !== "final-synthesis";
@@ -478,6 +494,20 @@ class DiscussionOrchestrator {
     return title || null;
   }
 
+  async generateRoundSummary(run, upToRound, settings) {
+    const roundsToSummarize = run.roundMessages.filter((r) => r.round <= upToRound);
+    const transcript = serializeTranscript(roundsToSummarize);
+
+    const result = await this.openaiService.generate({
+      systemPrompt: "You summarize scientific discussion rounds. Produce a concise summary that preserves: key positions taken by each agent, main points of agreement, main disagreements, and any revised views. Keep it under 400 words. Output ONLY the summary.",
+      userPrompt: `Summarize the following discussion rounds:\n\n${transcript}`,
+      override: { ...settings, maxOutputTokens: 500 }
+    });
+
+    accumulateUsage(run.metadata.tokenUsage, result.usage);
+    return (result.text || "").trim();
+  }
+
   async loadAllAgentConfigs() {
     const ids = [...getScientistAgentIds(), "coordinator"];
     const configs = {};
@@ -543,23 +573,39 @@ function buildCoordinatorPrompt({ topic, round, rounds, stage, customInstruction
   return `${base} Narrow discussion toward top 3 directions, bottlenecks, and next experiments.`;
 }
 
-function collectPeerMessages(roundMessages, currentAgentId) {
-  const peers = [];
+function collectPeerMessages(roundMessages, currentAgentId, roundSummaries = {}) {
+  const latestRound = Math.max(0, ...roundMessages.map((r) => r.round));
 
+  // Find the most recent summary covering prior rounds
+  const summaryKeys = Object.keys(roundSummaries).map(Number).sort((a, b) => b - a);
+  const summaryRound = summaryKeys.find((k) => k < latestRound);
+  const summaryText = summaryRound ? roundSummaries[summaryRound] : null;
+
+  if (summaryText) {
+    // Use summary for older rounds, raw messages only for latest round
+    const recentMessages = [];
+    for (const round of roundMessages) {
+      if (round.round === latestRound) {
+        for (const msg of round.messages || []) {
+          if (msg.agentId !== currentAgentId) {
+            recentMessages.push({ agentName: msg.agentName, round: round.round, content: msg.content });
+          }
+        }
+      }
+    }
+    return { summary: summaryText, recentMessages };
+  }
+
+  // Fallback: original behavior — all peer messages, last 6
+  const peers = [];
   for (const round of roundMessages) {
-    const messages = Array.isArray(round.messages) ? round.messages : [];
-    for (const msg of messages) {
+    for (const msg of round.messages || []) {
       if (msg.agentId !== currentAgentId) {
-        peers.push({
-          agentName: msg.agentName,
-          round: round.round,
-          content: msg.content
-        });
+        peers.push({ agentName: msg.agentName, round: round.round, content: msg.content });
       }
     }
   }
-
-  return peers.slice(-6);
+  return { summary: null, recentMessages: peers.slice(-6) };
 }
 
 function serializeTranscript(roundMessages) {
@@ -574,4 +620,4 @@ function serializeTranscript(roundMessages) {
     .join("\n\n");
 }
 
-module.exports = { DiscussionOrchestrator };
+module.exports = { DiscussionOrchestrator, collectPeerMessages };
