@@ -2,12 +2,9 @@ const { config } = require("../config");
 const { AppError } = require("../utils/errors");
 
 let userCache = null;
-let cacheLoadedAt = 0;
-const CACHE_TTL_MS = 60000;
 
 async function loadUserCache(store) {
-  const now = Date.now();
-  if (userCache && now - cacheLoadedAt < CACHE_TTL_MS) return userCache;
+  if (userCache) return userCache;
 
   const users = await store.listUsers();
   const map = new Map();
@@ -15,13 +12,11 @@ async function loadUserCache(store) {
     if (user.apiKey) map.set(user.apiKey, user);
   }
   userCache = map;
-  cacheLoadedAt = now;
   return map;
 }
 
 function invalidateUserCache() {
   userCache = null;
-  cacheLoadedAt = 0;
 }
 
 function authMiddleware(store) {

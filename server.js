@@ -1,6 +1,10 @@
 const path = require("path");
 const fs = require("fs");
 const express = require("express");
+const helmet = require("helmet");
+const cors = require("cors");
+const rateLimit = require("express-rate-limit");
+const morgan = require("morgan");
 const { config } = require("./src/config");
 const apiRouter = require("./src/routes/api");
 const { ensureBootstrap } = require("./src/storage/bootstrap");
@@ -27,6 +31,50 @@ async function start() {
 
   const app = express();
 
+  // ── Security headers ──
+  app.use(helmet({
+    contentSecurityPolicy: config.nodeEnv === "production" ? undefined : false,
+    crossOriginEmbedderPolicy: false
+  }));
+
+  // ── CORS ──
+  const corsOptions = {};
+  if (config.corsOrigin) {
+    corsOptions.origin = config.corsOrigin.split(",").map((s) => s.trim());
+  }
+  corsOptions.credentials = true;
+  app.use(cors(corsOptions));
+
+  // ── Rate limiting ──
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please try again later." },
+    skip: (req) => req.path === "/api/health"
+  });
+  app.use("/api", apiLimiter);
+
+  // Stricter limit for discussion creation (expensive LLM calls)
+  const discussionLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many discussions created. Please wait." }
+  });
+  app.use("/api/discussions", discussionLimiter);
+
+  // ── Request logging ──
+  const morganStream = { write: (msg) => logger.info(msg.trimEnd()) };
+  app.use(morgan(
+    config.nodeEnv === "production"
+      ? ":remote-addr :method :url :status :res[content-length] - :response-time ms"
+      : "dev",
+    { stream: morganStream, skip: (_req, res) => res.statusCode < 400 && config.nodeEnv === "production" }
+  ));
+
   app.use(express.json({ limit: "2mb" }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -47,12 +95,12 @@ async function start() {
 
     res.status(appError.statusCode || 500).json({
       error: appError.message,
-      details: appError.details || null
+      details: config.nodeEnv === "production" ? undefined : appError.details || null
     });
   });
 
   const server = app.listen(config.port, () => {
-    logger.info(`Scientific Agent Lab running on http://localhost:${config.port}`);
+    logger.info(`Scientific Agent Lab running on http://localhost:${config.port} [${config.nodeEnv}]`);
   });
 
   function gracefulShutdown(signal) {

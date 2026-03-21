@@ -48,7 +48,21 @@ function validatePathParam(value) {
 }
 
 router.get("/health", (_req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
+  const mem = process.memoryUsage();
+  const uptime = process.uptime();
+  res.json({
+    status: "ok",
+    time: new Date().toISOString(),
+    uptime: Math.floor(uptime),
+    activeRuns: getActiveRunIds().length,
+    storage: config.storageBackend,
+    memory: {
+      rss: Math.round(mem.rss / 1024 / 1024),
+      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(mem.heapTotal / 1024 / 1024)
+    },
+    node: process.version
+  });
 });
 
 router.post("/users", requireAdmin, async (req, res, next) => {

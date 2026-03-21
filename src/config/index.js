@@ -50,7 +50,11 @@ const config = {
     autoThreshold: parseNumber(process.env.MEMORY_AUTO_PRUNE_THRESHOLD, 30)
   },
   storageBackend: process.env.STORAGE_BACKEND || "file",
-  sqlitePath: process.env.SQLITE_PATH || ""
+  sqlitePath: process.env.SQLITE_PATH || "",
+  corsOrigin: process.env.CORS_ORIGIN || "",
+  logLevel: process.env.LOG_LEVEL || "info",
+  logDir: process.env.LOG_DIR || "",
+  nodeEnv: process.env.NODE_ENV || "development"
 };
 
 module.exports = { config };
