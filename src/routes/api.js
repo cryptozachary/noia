@@ -759,4 +759,7 @@ async function initializeStore() {
 }
 
 router.initializeStore = initializeStore;
+router.shutdownStore = function () {
+  if (typeof store.close === "function") store.close();
+};
 module.exports = router;

@@ -16,6 +16,19 @@ class FileStore {
     this.documentsDir = path.join(this.baseDir, "documents");
     this._runIndexCache = null;
     this._runIndexDirty = true;
+    this._locks = new Map();
+  }
+
+  /** Serialize writes to the same file path to prevent race conditions. */
+  async _withLock(key, fn) {
+    const prev = this._locks.get(key) || Promise.resolve();
+    const next = prev.then(fn, fn);
+    this._locks.set(key, next);
+    try {
+      return await next;
+    } finally {
+      if (this._locks.get(key) === next) this._locks.delete(key);
+    }
   }
 
   async readText(filePath, fallback = "") {
@@ -82,25 +95,27 @@ class FileStore {
   }
 
   async saveRun(run) {
-    run.updatedAt = new Date().toISOString();
-    const meta = {
-      id: run.id,
-      title: run.title,
-      topic: run.topic,
-      createdAt: run.createdAt,
-      updatedAt: run.updatedAt,
-      status: run.metadata && run.metadata.status ? run.metadata.status : "unknown"
-    };
-    if (run.branchedFrom) meta.branchedFrom = run.branchedFrom;
-    if (run.userId) meta.userId = run.userId;
-    if (run._researchSources && run._researchSources.length > 0) {
-      meta.researchSourceCount = run._researchSources.length;
-    }
-    await Promise.all([
-      this.writeJson(this.runPath(run.id), run),
-      this.writeJson(this.runMetaPath(run.id), meta)
-    ]);
-    this._runIndexDirty = true;
+    return this._withLock(`run:${run.id}`, async () => {
+      run.updatedAt = new Date().toISOString();
+      const meta = {
+        id: run.id,
+        title: run.title,
+        topic: run.topic,
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+        status: run.metadata && run.metadata.status ? run.metadata.status : "unknown"
+      };
+      if (run.branchedFrom) meta.branchedFrom = run.branchedFrom;
+      if (run.userId) meta.userId = run.userId;
+      if (run._researchSources && run._researchSources.length > 0) {
+        meta.researchSourceCount = run._researchSources.length;
+      }
+      await Promise.all([
+        this.writeJson(this.runPath(run.id), run),
+        this.writeJson(this.runMetaPath(run.id), meta)
+      ]);
+      this._runIndexDirty = true;
+    });
   }
 
   async loadRun(runId) {
@@ -176,22 +191,26 @@ class FileStore {
   }
 
   async writeAgentMemory(agentId, content) {
-    await this.writeText(this.agentPath(agentId, "memory.md"), content);
+    return this._withLock(`memory:${agentId}`, async () => {
+      await this.writeText(this.agentPath(agentId, "memory.md"), content);
+    });
   }
 
   async appendAgentSessionEntry(agentId, runId, entry) {
-    const sessionPath = path.join(this.agentsDir, agentId, "sessions", `${runId}.json`);
-    const existing = (await this.readJson(sessionPath, {
-      runId,
-      agentId,
-      createdAt: new Date().toISOString(),
-      entries: []
-    })) || { runId, agentId, createdAt: new Date().toISOString(), entries: [] };
+    return this._withLock(`session:${agentId}:${runId}`, async () => {
+      const sessionPath = path.join(this.agentsDir, agentId, "sessions", `${runId}.json`);
+      const existing = (await this.readJson(sessionPath, {
+        runId,
+        agentId,
+        createdAt: new Date().toISOString(),
+        entries: []
+      })) || { runId, agentId, createdAt: new Date().toISOString(), entries: [] };
 
-    existing.entries.push(entry);
-    existing.updatedAt = new Date().toISOString();
+      existing.entries.push(entry);
+      existing.updatedAt = new Date().toISOString();
 
-    await this.writeJson(sessionPath, existing);
+      await this.writeJson(sessionPath, existing);
+    });
   }
 
   async createAgent(agentId, { identity, system, memory }) {

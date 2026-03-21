@@ -11,6 +11,7 @@ const { ensureBootstrap } = require("./src/storage/bootstrap");
 const { logger } = require("./src/utils/logger");
 const { toAppError } = require("./src/utils/errors");
 const { shutdownAll } = require("./src/orchestrator/runManager");
+const { requestIdMiddleware } = require("./src/middleware/requestId");
 
 async function start() {
   const provider = (config.llmProvider || "openai").toLowerCase();
@@ -30,6 +31,9 @@ async function start() {
   }
 
   const app = express();
+
+  // ── Request ID ──
+  app.use(requestIdMiddleware());
 
   // ── Security headers ──
   app.use(helmet({
@@ -52,7 +56,7 @@ async function start() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests. Please try again later." },
-    skip: (req) => req.path === "/api/health"
+    skip: (req) => req.path === "/api/health" || req.path.endsWith("/stream")
   });
   app.use("/api", apiLimiter);
 
@@ -62,16 +66,18 @@ async function start() {
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: "Too many discussions created. Please wait." }
+    message: { error: "Too many discussions created. Please wait." },
+    skip: (req) => req.path.endsWith("/stream")
   });
   app.use("/api/discussions", discussionLimiter);
 
   // ── Request logging ──
+  morgan.token("req-id", (req) => req.id || "-");
   const morganStream = { write: (msg) => logger.info(msg.trimEnd()) };
   app.use(morgan(
     config.nodeEnv === "production"
-      ? ":remote-addr :method :url :status :res[content-length] - :response-time ms"
-      : "dev",
+      ? ":req-id :remote-addr :method :url :status :res[content-length] - :response-time ms"
+      : ":req-id :method :url :status :response-time ms",
     { stream: morganStream, skip: (_req, res) => res.statusCode < 400 && config.nodeEnv === "production" }
   ));
 
@@ -89,14 +95,16 @@ async function start() {
     res.sendFile(path.join(staticDir, "index.html"));
   });
 
-  app.use((error, _req, res, _next) => {
+  app.use((error, req, res, _next) => {
     const appError = toAppError(error);
-    logger.error(appError.message, appError.details || null);
+    logger.error(appError.message, { requestId: req.id, ...(appError.details || {}) });
 
-    res.status(appError.statusCode || 500).json({
+    const body = {
       error: appError.message,
-      details: config.nodeEnv === "production" ? undefined : appError.details || null
-    });
+      requestId: req.id
+    };
+    if (config.nodeEnv !== "production") body.details = appError.details || null;
+    res.status(appError.statusCode || 500).json(body);
   });
 
   const server = app.listen(config.port, () => {
@@ -106,6 +114,7 @@ async function start() {
   function gracefulShutdown(signal) {
     logger.info(`${signal} received — shutting down gracefully`);
     shutdownAll();
+    try { apiRouter.shutdownStore(); } catch { /* best effort */ }
     server.close(() => {
       logger.info("Server closed");
       process.exit(0);

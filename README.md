@@ -1,83 +1,98 @@
-# Scientific Agent Lab
+# NOIA - Scientific Agent Lab
 
-Scientific Agent Lab is a local-first MVP for structured multi-agent scientific discussion.
-It runs three persistent scientist agents plus one coordinator agent, stores transcripts on disk, and produces a structured synthesis report.
+Multi-agent AI discussion platform for scientific research. Three specialized agents (Research Synthesizer, Skeptical Reviewer, Innovation Strategist) debate topics across structured rounds, producing a 10-section synthesis report.
 
-## What It Does
+## Quick Start
 
-- Runs configurable round-based scientific discussions on user topics.
-- Maintains separate identity, system prompt, memory, and session transcripts per agent.
-- Persists all run artifacts locally in the filesystem.
-- Enforces structured output and uncertainty labeling.
-- Adds explicit safety disclaimer behavior for medical/health topics.
-- Supports history browsing, run reload, and in-app memory editing.
+```bash
+# 1. Install dependencies
+npm install
 
-## Stack
+# 2. Configure environment
+cp .env.example .env
+# Edit .env - set OPENAI_API_KEY (required)
 
-- Node.js
-- Express
-- OpenAI API (`openai` package)
-- Vanilla HTML/CSS/JavaScript
-- Filesystem persistence (no DB in v1)
+# 3. Start server
+npm start
 
-## Project Structure
-
-```text
-.
-+- server.js
-+- package.json
-+- .env.example
-+- public/
-¦  +- index.html
-¦  +- styles.css
-¦  +- app.js
-+- src/
-¦  +- config/
-¦  ¦  +- index.js
-¦  +- routes/
-¦  ¦  +- api.js
-¦  +- orchestrator/
-¦  ¦  +- discussionOrchestrator.js
-¦  +- agents/
-¦  ¦  +- registry.js
-¦  ¦  +- promptComposer.js
-¦  +- services/
-¦  ¦  +- openaiService.js
-¦  ¦  +- outputValidator.js
-¦  ¦  +- safety.js
-¦  +- storage/
-¦  ¦  +- bootstrap.js
-¦  ¦  +- fileStore.js
-¦  +- utils/
-¦     +- errors.js
-¦     +- logger.js
-+- data/
-¦  +- agents/
-¦  ¦  +- research-synthesizer/
-¦  ¦  +- skeptical-reviewer/
-¦  ¦  +- innovation-strategist/
-¦  ¦  +- coordinator/
-¦  +- topics/
-¦  +- runs/
-¦  +- exports/
-+- scripts/
-   +- seed-sample-runs.js
-   +- verify-mvp.js
+# 4. Open browser
+# http://localhost:3000
 ```
+
+### Development
+
+```bash
+npm run dev          # Start backend server
+npm run dev:client   # Start Vite dev server (port 5173, proxies /api to 3000)
+npm test             # Run all tests (250 tests)
+npm run build        # Build frontend for production
+```
+
+## Architecture
+
+```
+server.js                          Express entry point
+src/
+  config/index.js                  Environment configuration (31 vars)
+  middleware/
+    auth.js                        API key authentication (opt-in)
+    requestId.js                   X-Request-Id tracing
+  routes/api.js                    REST API (30+ endpoints)
+  orchestrator/
+    discussionOrchestrator.js      Core multi-round discussion logic
+    runManager.js                  Active run lifecycle management
+  services/
+    openaiService.js               OpenAI LLM integration
+    anthropicService.js            Anthropic Claude integration
+    llmFactory.js                  LLM provider factory
+    embeddingService.js            Vector embeddings & similarity search
+    researchService.js             Tavily web search integration
+    documentService.js             PDF/text document ingestion
+    snapshotService.js             Agent state snapshots & rollback
+    memoryPruner.js                Agent memory summarization
+    costCalculator.js              Token cost tracking (13 models)
+    safety.js                      Medical topic detection & disclaimers
+    outputValidator.js             Structured output enforcement
+    exportBuilder.js               Markdown/HTML report export
+    claimExtractor.js              Claim extraction from discussions
+    graphBuilder.js                Argument graph construction
+  storage/
+    index.js                       Storage backend factory
+    fileStore.js                   File-based storage (default)
+    sqliteStore.js                 SQLite storage (optional)
+    bootstrap.js                   Data directory initialization
+  agents/
+    registry.js                    Agent registry & management
+    promptComposer.js              Prompt templates
+  utils/
+    logger.js                      Structured JSON logging with rotation
+    errors.js                      AppError class
+client/                            Svelte 5 frontend (19 components)
+```
+
+## Features
+
+- **Multi-agent debate** - Parallel agent execution across structured rounds (initial positions, cross-critique, convergence)
+- **Streaming output** - Real-time SSE with 20 event types
+- **Dual LLM provider** - OpenAI + Anthropic with per-agent model overrides
+- **Web research** - Tavily search integration with source tracking
+- **Document ingestion** - PDF and text file upload, arXiv paper import
+- **Agent memory** - Persistent memory with vector-indexed recall, auto-pruning, and snapshots
+- **Interactive mode** - Pause between rounds for user guidance
+- **Run management** - Branch from any round, compare runs side-by-side
+- **Evaluation** - Claim extraction, argument graph visualization, consensus metrics
+- **Export** - Markdown and HTML report export
+- **Cost tracking** - Real-time token counting and cost estimation for 13 models
+- **Medical safety** - Automatic keyword detection and disclaimer injection
+- **Templates** - Save and reuse discussion configurations
+- **Annotations** - Add notes to any agent response
 
 ## Agent Roles
 
-1. Research Synthesizer
-- Maps known background and scientific framing.
-
-2. Skeptical Reviewer
-- Challenges assumptions and evidence quality.
-
-3. Innovation Strategist
-- Proposes novel but testable research directions.
-
-4. Coordinator
-- Orchestrates rounds and produces final synthesis.
+1. **Research Synthesizer** - Maps established background, terminology, current approaches
+2. **Skeptical Reviewer** - Stress-tests claims, exposes weak evidence, identifies risk
+3. **Innovation Strategist** - Proposes inventive, testable hypotheses and experiments
+4. **Coordinator** - Enforces round structure and produces final 10-section synthesis
 
 ## Round Flow
 
@@ -85,12 +100,10 @@ Default is 4 rounds (configurable 2-8):
 
 - Round 1: Initial positions
 - Round 2: Cross-critique
-- Round 3..N-1: Convergence
+- Rounds 3..N-1: Convergence
 - Round N: Final synthesis by coordinator
 
 ## Final Report Structure
-
-The coordinator final report is normalized to include exactly:
 
 1. Topic
 2. Executive Summary
@@ -103,67 +116,106 @@ The coordinator final report is normalized to include exactly:
 9. Suggested Next Research Directions
 10. Safety Note / Disclaimer
 
-## API Overview
+## API Endpoints
 
-- `GET /api/health`
-- `GET /api/runs`
-- `GET /api/runs/:runId`
-- `POST /api/discussions`
-- `GET /api/agents`
-- `GET /api/agents/:agentId/memory`
-- `PUT /api/agents/:agentId/memory`
-- `GET /api/agents/:agentId/config`
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check with metrics (uptime, memory, active runs) |
+| POST | `/api/discussions` | Create new discussion |
+| GET | `/api/discussions/active` | List active run IDs |
+| DELETE | `/api/discussions/:runId` | Cancel running discussion |
+| GET | `/api/discussions/:runId/stream` | SSE event stream |
+| POST | `/api/discussions/:runId/input` | Provide input during pause |
+| GET | `/api/runs` | List runs (paginated) |
+| GET | `/api/runs/:runId` | Load run with cost |
+| DELETE | `/api/runs/:runId` | Delete run |
+| GET | `/api/runs/compare?a=X&b=Y` | Compare two runs |
+| POST | `/api/runs/:runId/branch` | Branch from round |
+| GET | `/api/runs/:runId/export/md` | Export Markdown |
+| GET | `/api/runs/:runId/export/html` | Export HTML |
+| GET/POST/DELETE | `/api/runs/:runId/annotations` | Annotation CRUD |
+| POST | `/api/runs/:runId/evaluate` | Evaluate discussion |
+| GET | `/api/agents` | List agents |
+| GET/PUT | `/api/agents/:id/memory` | Agent memory |
+| POST/GET | `/api/agents/:id/snapshot(s)` | Memory snapshots |
+| POST | `/api/agents/:id/prune-memory` | Prune old memory |
+| POST | `/api/agents` | Create custom agent |
+| GET/POST/DELETE | `/api/templates` | Template CRUD |
+| POST | `/api/documents/upload` | Upload document (50MB) |
+| POST | `/api/documents/arxiv` | Import arXiv paper |
+| GET/DELETE | `/api/documents/:id` | Document management |
+| GET | `/api/cost/estimate` | Cost estimation |
 
-## Setup
+## Configuration
 
-1. Install dependencies:
+All configuration is via environment variables. See [.env.example](.env.example) for the full list (31 variables).
+
+**Key settings:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | *(required)* | OpenAI API key |
+| `LLM_PROVIDER` | `openai` | `openai` or `anthropic` |
+| `STORAGE_BACKEND` | `file` | `file` or `sqlite` |
+| `REQUIRE_AUTH` | `false` | Enable API key authentication |
+| `CORS_ORIGIN` | `*` | Comma-separated allowed origins |
+| `LOG_DIR` | *(empty)* | Directory for log files (JSON lines, 10MB rotation) |
+| `NODE_ENV` | `development` | `production` enables strict security headers |
+
+## Deployment
+
+### Docker
+
 ```bash
-npm install
+# Build and run
+docker compose up -d
+
+# Or build manually
+docker build -t noia .
+docker run -p 3000:3000 --env-file .env noia
 ```
 
-2. Create environment file:
+The Docker image uses multi-stage builds, runs as non-root, and includes a health check.
+
+### Production Checklist
+
+- [ ] Set `NODE_ENV=production`
+- [ ] Set `CORS_ORIGIN` to your domain
+- [ ] Set `LOG_DIR=/app/logs` for file-based logging
+- [ ] Set `REQUIRE_AUTH=true` and create API keys via `POST /api/users`
+- [ ] Put behind a reverse proxy (nginx/caddy) with TLS
+- [ ] Back up `data/` directory or SQLite database
+
+## Security
+
+- **Helmet** - Security headers (CSP in production, X-Content-Type-Options, HSTS)
+- **CORS** - Configurable origin whitelist
+- **Rate limiting** - 120 req/min API, 10 req/min discussion creation, SSE exempt
+- **Authentication** - Opt-in API key auth via `X-API-Key` header
+- **Request tracing** - `X-Request-Id` on all requests and error responses
+- **Path traversal protection** - All path parameters validated
+- **Input validation** - Request schema validation, file size limits (50MB)
+- **Error containment** - Stack traces stripped in production
+- **Write locking** - File store serializes concurrent writes per resource
+
+## Storage Backends
+
+**File (default):** JSON files in `data/` directory. Write-through locking prevents race conditions. Good for development and small deployments.
+
+**SQLite:** Set `STORAGE_BACKEND=sqlite`. WAL mode enabled. Better for concurrent access and 1000+ runs. Migrate existing data:
+
 ```bash
-copy .env.example .env
+node scripts/migrate-to-sqlite.js
 ```
 
-3. Add your OpenAI key in `.env`:
-- `OPENAI_API_KEY=...`
+## Testing
 
-4. Seed sample runs:
 ```bash
-npm run seed
+npm test              # All 250 tests (unit + integration)
 ```
 
-5. Run verification script:
-```bash
-npm run verify
-```
+22 unit test suites covering all services, storage backends, authentication, and orchestration. 26 integration tests covering HTTP endpoints, security headers, request tracing, and CRUD operations.
 
-6. Start server:
-```bash
-npm start
-```
+## License
 
-Open: `http://localhost:3000`
-
-## Notes On Prompt / Code Sync
-
-- Agent prompt files are externalized in `data/agents/*/system.md`.
-- Orchestrator enforces structure independently and normalizes missing sections.
-- Memory editor writes directly to each agent `memory.md` file.
-- Keep prompt headings aligned with `src/services/outputValidator.js` when editing structure.
-
-## Known MVP Limitations
-
-- Runs are synchronous and request/response based (no background queue yet).
-- No live token usage telemetry.
-- No citation retrieval tooling in this version.
-- UI assumes local trusted environment (no auth layer in v1).
-
-## Next Improvements
-
-- Add consensus/debate mode switches.
-- Add per-agent model settings.
-- Add transcript compaction and memory summarization.
-- Add citation mode and optional tool-enabled research connectors.
-- Add robust integration tests and run replay harness.
+MIT
