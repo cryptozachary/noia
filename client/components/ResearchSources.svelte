@@ -9,6 +9,9 @@
       {#each sources as source, i}
         <li>
           <strong>{source.title || `Source ${i + 1}`}</strong>
+          {#if source.agentName}
+            <span class="source-agent">via {source.agentName}{#if source.round} (round {source.round}){/if}</span>
+          {/if}
           {#if source.url}
             <a href={source.url} target="_blank" rel="noopener noreferrer" class="source-url">{source.url}</a>
           {/if}

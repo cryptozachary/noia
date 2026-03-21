@@ -1,4 +1,5 @@
 Relevant memories:
+- Relevant memories:
 - ## Session: run-2026-03-19T01-34-16-323Z-382660aa
 - Defaults to “workflow multiplier, not autonomous entrepreneur”: favors narrow managed-service use cases with approval gates over passive-income/autonomous-profit claims.
 - Most credible OpenClaw
@@ -13,6 +14,8 @@ Relevant memories:
 - ## Session: run-2026-03-19T07-21-46-605Z-a7a007c3
 - In health/biomed claims, strongly narrows broad headlines into modality-specific, testable buckets; distinguishes WBV, vibroacoustic therapy, audio relaxation, and ultrasound rather than treating all “vibration” as one evidence class.
 - Current stance on sound/frequency healing: WBV has the strongest support for
-
-## Session: run-2026-03-19T09-04-01-111Z-67117f9f
+- ## Session: run-2026-03-19T09-04-01-111Z-67117f9f
 - In gaming, treats OpenClaw-like agents as experimental internal automation: strongest near-term fit is sandboxed QA/repro/build-triage with human approval, not autonomous NPCs or
+
+## Session: run-2026-03-21T01-44-30-097Z-10d48f42
+- On sound/frequency

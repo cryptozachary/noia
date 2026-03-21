@@ -47,13 +47,15 @@ class OpenAIService {
 
         const usage = response.usage || null;
 
+        const sources = extractWebSources(response);
+
         if (response.output_text && response.output_text.trim()) {
-          return { text: response.output_text.trim(), usage };
+          return { text: response.output_text.trim(), usage, sources };
         }
 
         const content = extractOutputText(response);
         if (content) {
-          return { text: content, usage };
+          return { text: content, usage, sources };
         }
 
         throw new Error("OpenAI response did not include output text.");
@@ -105,6 +107,7 @@ class OpenAIService {
 
         let fullText = "";
         let usage = null;
+        let completedResponse = null;
 
         for await (const event of stream) {
           if (event.type === "response.output_text.delta") {
@@ -112,6 +115,7 @@ class OpenAIService {
             if (onToken) onToken(event.delta);
           } else if (event.type === "response.completed") {
             usage = event.response && event.response.usage ? event.response.usage : null;
+            completedResponse = event.response;
           } else if (event.type === "response.web_search_call.searching") {
             if (onToolEvent) onToolEvent({ type: "web_search", status: "searching" });
           } else if (event.type === "response.web_search_call.completed") {
@@ -125,7 +129,8 @@ class OpenAIService {
           throw new Error("OpenAI stream did not produce output text.");
         }
 
-        return { text: fullText.trim(), usage };
+        const sources = extractWebSources(completedResponse);
+        return { text: fullText.trim(), usage, sources };
       } catch (error) {
         clearTimeout(timer);
         logger.warn("OpenAI stream attempt failed", { attempt, message: error.message });
@@ -142,6 +147,29 @@ class OpenAIService {
 
     throw new AppError("OpenAI streaming failed unexpectedly.", 502);
   }
+}
+
+function extractWebSources(response) {
+  const sources = [];
+  const out = response && Array.isArray(response.output) ? response.output : [];
+  for (const item of out) {
+    const content = Array.isArray(item.content) ? item.content : [];
+    for (const block of content) {
+      if (block.type === "output_text" && Array.isArray(block.annotations)) {
+        for (const ann of block.annotations) {
+          if (ann.type === "url_citation" && ann.url) {
+            sources.push({ title: ann.title || "", url: ann.url });
+          }
+        }
+      }
+    }
+  }
+  const seen = new Set();
+  return sources.filter((s) => {
+    if (seen.has(s.url)) return false;
+    seen.add(s.url);
+    return true;
+  });
 }
 
 function extractOutputText(response) {

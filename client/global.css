@@ -1000,6 +1000,16 @@ hr {
   word-break: break-all;
 }
 
+.source-agent {
+  display: inline-block;
+  font-size: 0.72rem;
+  color: var(--accent);
+  background: rgba(14, 90, 122, 0.08);
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+}
+
 .source-snippet {
   font-size: 0.8rem;
   color: var(--muted);

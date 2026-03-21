@@ -184,6 +184,15 @@ class DiscussionOrchestrator {
               });
 
           accumulateUsage(run.metadata.tokenUsage, result.usage);
+
+          if (result.sources && result.sources.length > 0 && emitter) {
+            emitter.emit("tool-event", {
+              type: "web_search", status: "sources",
+              round, agentId: "coordinator", agentName: "Coordinator",
+              sources: result.sources
+            });
+          }
+
           let finalReport = ensureFinalReportStructure(result.text, topic);
           if (medicalTopic) {
             finalReport = ensureMedicalDisclaimer(finalReport);
@@ -320,6 +329,14 @@ class DiscussionOrchestrator {
                 content: response, timestamp: message.timestamp,
                 tokenUsage: result.usage || null
               });
+
+              if (result.sources && result.sources.length > 0 && emitter) {
+                emitter.emit("tool-event", {
+                  type: "web_search", status: "sources",
+                  round, agentId, agentName: message.agentName,
+                  sources: result.sources
+                });
+              }
 
               await this.store.appendAgentSessionEntry(agentId, run.id, {
                 round,

@@ -60,7 +60,8 @@ class AnthropicService {
           throw new Error("Anthropic response did not include output text.");
         }
 
-        return { text, usage };
+        const sources = extractWebSources(response);
+        return { text, usage, sources };
       } catch (error) {
         clearTimeout(timer);
         logger.warn("Anthropic call attempt failed", { attempt, message: error.message });
@@ -135,7 +136,8 @@ class AnthropicService {
           throw new Error("Anthropic stream did not produce output text.");
         }
 
-        return { text, usage };
+        const sources = extractWebSources(message);
+        return { text, usage, sources };
       } catch (error) {
         clearTimeout(timer);
         logger.warn("Anthropic stream attempt failed", { attempt, message: error.message });
@@ -152,6 +154,26 @@ class AnthropicService {
 
     throw new AppError("Anthropic streaming failed unexpectedly.", 502);
   }
+}
+
+function extractWebSources(message) {
+  const sources = [];
+  const content = Array.isArray(message.content) ? message.content : [];
+  for (const block of content) {
+    if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
+      for (const result of block.content) {
+        if (result.type === "web_search_result" && result.url) {
+          sources.push({ title: result.title || "", url: result.url });
+        }
+      }
+    }
+  }
+  const seen = new Set();
+  return sources.filter((s) => {
+    if (seen.has(s.url)) return false;
+    seen.add(s.url);
+    return true;
+  });
 }
 
 function sleep(ms) {

@@ -120,8 +120,19 @@ export function connectSSE(runId) {
     } catch { /* ignore */ }
   });
 
-  source.addEventListener("tool-event", () => {
-    // Tool events are visual-only in the vanilla version; store state unchanged
+  source.addEventListener("tool-event", (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.sources && data.sources.length > 0) {
+        sseResearchSources.update((existing) => {
+          const seen = new Set(existing.map((s) => s.url));
+          const newSources = data.sources
+            .filter((s) => s.url && !seen.has(s.url))
+            .map((s) => ({ ...s, agentId: data.agentId, agentName: data.agentName, round: data.round }));
+          return [...existing, ...newSources];
+        });
+      }
+    } catch { /* ignore */ }
   });
 
   source.addEventListener("final-report", (e) => {
