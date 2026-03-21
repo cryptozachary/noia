@@ -93,6 +93,9 @@ class FileStore {
     };
     if (run.branchedFrom) meta.branchedFrom = run.branchedFrom;
     if (run.userId) meta.userId = run.userId;
+    if (run._researchSources && run._researchSources.length > 0) {
+      meta.researchSourceCount = run._researchSources.length;
+    }
     await Promise.all([
       this.writeJson(this.runPath(run.id), run),
       this.writeJson(this.runMetaPath(run.id), meta)

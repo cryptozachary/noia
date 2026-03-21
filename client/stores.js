@@ -11,6 +11,7 @@ export const sseRounds = writable([]);
 export const sseFinalReport = writable("");
 export const sseIsPaused = writable(false);
 export const ssePausedRound = writable(null);
+export const sseResearchSources = writable([]);
 
 // Collections
 export const agents = writable([]);

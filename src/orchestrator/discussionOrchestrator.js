@@ -101,7 +101,10 @@ class DiscussionOrchestrator {
         const results = await this.researchService.search(topic);
         researchContext = this.researchService.formatAsContext(results);
         run._researchContext = researchContext;
-        if (emitter) emitter.emit("research-complete", { sourceCount: results.length });
+        if (results.length > 0) {
+          run._researchSources = results.map((r) => ({ title: r.title, url: r.url, snippet: r.snippet }));
+        }
+        if (emitter) emitter.emit("research-complete", { sourceCount: results.length, sources: run._researchSources || [] });
       }
 
       // Inject document context if documentIds provided

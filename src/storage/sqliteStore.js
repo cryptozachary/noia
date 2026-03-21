@@ -148,7 +148,7 @@ class SqliteStore {
     const total = this.db.prepare("SELECT COUNT(*) as cnt FROM runs").get().cnt;
     const offset = (page - 1) * limit;
     const rows = this.db.prepare(
-      "SELECT id, title, topic, status, user_id, branched_from, created_at, updated_at FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?"
+      "SELECT id, title, topic, status, user_id, branched_from, created_at, updated_at, data FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?"
     ).all(limit, offset);
 
     const runs = rows.map((r) => {
@@ -157,6 +157,12 @@ class SqliteStore {
       if (r.branched_from) {
         try { meta.branchedFrom = JSON.parse(r.branched_from); } catch { /* skip */ }
       }
+      try {
+        const parsed = JSON.parse(r.data);
+        if (parsed._researchSources && parsed._researchSources.length > 0) {
+          meta.researchSourceCount = parsed._researchSources.length;
+        }
+      } catch { /* skip */ }
       return meta;
     });
 

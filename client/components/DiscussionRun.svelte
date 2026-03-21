@@ -1,5 +1,5 @@
 <script>
-  import { currentRun, activeRunId, sseRounds, sseFinalReport, liveTokens, currentModel } from "../stores.js";
+  import { currentRun, activeRunId, sseRounds, sseFinalReport, liveTokens, currentModel, sseResearchSources } from "../stores.js";
   import { clientCalculateCost, formatCost } from "../lib/costs.js";
   import { escapeHtml } from "../lib/utils.js";
   import { api } from "../lib/api.js";
@@ -8,6 +8,7 @@
   import UserInput from "./UserInput.svelte";
   import FinalReport from "./FinalReport.svelte";
   import EvaluationPanel from "./EvaluationPanel.svelte";
+  import ResearchSources from "./ResearchSources.svelte";
 
   $: run = $currentRun;
   $: rounds = run?.roundMessages || ($activeRunId ? $sseRounds : []);
@@ -20,6 +21,7 @@
   $: evalMetrics = run?.metadata?.evaluationMetrics;
   $: evalGraph = run?.metadata?.argumentGraph;
   $: hasReport = Boolean(finalText);
+  $: researchSources = run?._researchSources || ($activeRunId ? $sseResearchSources : []);
 
   async function copyReport() {
     if (!finalText) return;
@@ -51,7 +53,11 @@
   <div class="run-meta">
     <strong>{run.title || run.topic}</strong><br />
     <span>{run.id}</span><br />
-    <span>Rounds: {run.rounds || 0} | Status: {run.metadata ? run.metadata.status : "unknown"}</span>
+    <span>Rounds: {run.rounds || 0} | Status: {run.metadata ? run.metadata.status : "unknown"}
+      {#if researchSources.length > 0}
+        <span class="research-badge">{researchSources.length} sources</span>
+      {/if}
+    </span>
   </div>
 {:else if $activeRunId}
   <div class="run-meta">
@@ -71,6 +77,8 @@
     {/if}
   </div>
 {/if}
+
+<ResearchSources sources={researchSources} />
 
 <div class="rounds" aria-label="Discussion rounds">
   {#each rounds as round (round.round)}

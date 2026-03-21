@@ -2,7 +2,7 @@ import { get } from "svelte/store";
 import {
   activeRunId, currentRun, currentModel, liveTokens,
   sseRounds, sseFinalReport, sseIsPaused, ssePausedRound,
-  statusText, historyRuns
+  sseResearchSources, statusText, historyRuns
 } from "../stores.js";
 import { api } from "./api.js";
 import { addToast } from "./toastManager.js";
@@ -32,6 +32,7 @@ export function connectSSE(runId) {
     try {
       const data = JSON.parse(e.data);
       if (data.sourceCount > 0) addToast(`Found ${data.sourceCount} research sources.`);
+      if (data.sources && data.sources.length > 0) sseResearchSources.set(data.sources);
     } catch { /* ignore */ }
   });
 
@@ -239,6 +240,7 @@ function finishRun() {
   sseFinalReport.set("");
   sseIsPaused.set(false);
   ssePausedRound.set(null);
+  sseResearchSources.set([]);
   statusText.set("Idle");
 }
 

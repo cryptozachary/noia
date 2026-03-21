@@ -15,6 +15,9 @@
   {#if run.branchedFrom}
     <span class="branch-indicator">branched from round {run.branchedFrom.round}</span>
   {/if}
+  {#if run.researchSourceCount}
+    <span class="research-indicator">{run.researchSourceCount} sources</span>
+  {/if}
   <button type="button" class="delete-run-btn" on:click|stopPropagation={() => dispatch("delete")}>Delete</button>
   <button type="button" class="compare-run-btn" on:click|stopPropagation={() => dispatch("compare")}>
     {compareRunId && compareRunId !== run.id ? "Compare" : "Select"}
