@@ -333,6 +333,21 @@ describe("Integration tests", () => {
     assert.ok(list.body.snapshots.length >= 1);
   });
 
+  // ── Usage ──
+
+  it("GET /api/usage returns aggregated usage data", async () => {
+    const res = await request("GET", "/api/usage");
+    assert.equal(res.status, 200);
+    assert.ok(res.body.totals);
+    assert.equal(typeof res.body.totals.input_tokens, "number");
+    assert.equal(typeof res.body.totals.output_tokens, "number");
+    assert.equal(typeof res.body.totals.totalCost, "number");
+    assert.equal(typeof res.body.totals.runCount, "number");
+    assert.ok(res.body.byModel);
+    assert.ok(res.body.byDay);
+    assert.ok(Array.isArray(res.body.recentRuns));
+  });
+
   // ── Users (no auth required) ──
 
   it("GET /api/users/me returns null user when no auth", async () => {

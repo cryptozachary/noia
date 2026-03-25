@@ -159,6 +159,83 @@ router.get("/cost/estimate", (req, res) => {
   res.json({ estimate });
 });
 
+router.get("/usage", async (req, res, next) => {
+  try {
+    // Load all runs (unpaginated) — meta includes tokenUsage and model
+    const result = await store.listRuns({ page: 1, limit: 100000 });
+    const allRuns = result.runs || [];
+
+    const totals = { input_tokens: 0, output_tokens: 0, total_tokens: 0, totalCost: 0, runCount: 0 };
+    const byModel = {};
+    const byDay = {};
+    const recentRuns = [];
+
+    for (const run of allRuns) {
+      if (!run.tokenUsage || run.status === "cancelled") continue;
+
+      const usage = run.tokenUsage;
+      const model = run.model || "unknown";
+      const cost = calculateCost(model, usage);
+
+      totals.input_tokens += usage.input_tokens || 0;
+      totals.output_tokens += usage.output_tokens || 0;
+      totals.total_tokens += usage.total_tokens || 0;
+      totals.totalCost += cost.totalCost;
+      totals.runCount += 1;
+
+      // Per-model aggregation
+      if (!byModel[model]) {
+        byModel[model] = { input_tokens: 0, output_tokens: 0, total_tokens: 0, totalCost: 0, runCount: 0 };
+      }
+      byModel[model].input_tokens += usage.input_tokens || 0;
+      byModel[model].output_tokens += usage.output_tokens || 0;
+      byModel[model].total_tokens += usage.total_tokens || 0;
+      byModel[model].totalCost += cost.totalCost;
+      byModel[model].runCount += 1;
+
+      // Per-day aggregation
+      const day = (run.createdAt || "").slice(0, 10);
+      if (day) {
+        if (!byDay[day]) {
+          byDay[day] = { input_tokens: 0, output_tokens: 0, total_tokens: 0, totalCost: 0, runCount: 0 };
+        }
+        byDay[day].input_tokens += usage.input_tokens || 0;
+        byDay[day].output_tokens += usage.output_tokens || 0;
+        byDay[day].total_tokens += usage.total_tokens || 0;
+        byDay[day].totalCost += cost.totalCost;
+        byDay[day].runCount += 1;
+      }
+
+      // Collect recent runs (already sorted newest-first from listRuns)
+      if (recentRuns.length < 20) {
+        recentRuns.push({
+          id: run.id,
+          title: run.title,
+          topic: run.topic,
+          model,
+          createdAt: run.createdAt,
+          status: run.status,
+          tokenUsage: usage,
+          cost: cost.totalCost
+        });
+      }
+    }
+
+    // Round totals
+    totals.totalCost = Math.round(totals.totalCost * 1_000_000) / 1_000_000;
+    for (const m of Object.values(byModel)) {
+      m.totalCost = Math.round(m.totalCost * 1_000_000) / 1_000_000;
+    }
+    for (const d of Object.values(byDay)) {
+      d.totalCost = Math.round(d.totalCost * 1_000_000) / 1_000_000;
+    }
+
+    res.json({ totals, byModel, byDay, recentRuns });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/discussions", async (req, res, next) => {
   try {
     const valid = validateDiscussionRequest(req.body || {});

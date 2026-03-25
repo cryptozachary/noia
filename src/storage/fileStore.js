@@ -110,6 +110,8 @@ class FileStore {
       if (run._researchSources && run._researchSources.length > 0) {
         meta.researchSourceCount = run._researchSources.length;
       }
+      if (run.metadata && run.metadata.tokenUsage) meta.tokenUsage = run.metadata.tokenUsage;
+      if (run.metadata && run.metadata.model) meta.model = run.metadata.model;
       await Promise.all([
         this.writeJson(this.runPath(run.id), run),
         this.writeJson(this.runMetaPath(run.id), meta)

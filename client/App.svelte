@@ -11,6 +11,9 @@
   import HistoryList from "./components/HistoryList.svelte";
   import AgentPanel from "./components/AgentPanel.svelte";
   import RunComparison from "./components/RunComparison.svelte";
+  import UsageDashboard from "./components/UsageDashboard.svelte";
+
+  let showUsage = false;
 
   onMount(async () => {
     $statusText = "Loading";
@@ -42,7 +45,7 @@
   });
 </script>
 
-<TopBar />
+<TopBar on:toggle-usage={() => showUsage = !showUsage} />
 <Toast />
 
 <main class="layout" role="main">
@@ -62,3 +65,7 @@
 </main>
 
 <RunComparison />
+
+{#if showUsage}
+  <UsageDashboard onClose={() => showUsage = false} />
+{/if}

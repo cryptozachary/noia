@@ -1,4 +1,8 @@
 Relevant memories:
+- ## Session: run-2026-03-19T09-04-01-111Z-67117f9f
+- ## Session: run-2026-03-19T[unknown]-gaming-openclaw
+- In gaming, consistently argued OpenClaw-like agents are best as constrained studio-side operators—especially sandboxed agentic QA/synthetic player rehearsal, build/test automation, bug triage, telemetry/community summarization, and live-ops/content drafting
+- Relevant memories:
 - ## Session: run-2026-03-19T01-38-42-893Z-fba56bf3
 - Preferred OpenClaw use cases ranked: competitor/market monitoring + recurring reporting first, then inbound lead enrichment/proposal drafting with human send approval, then support ticket triage/draft responses.
 - Rejected “autonomous entrepreneur,” self-improving, and passive-income narratives as speculative without repeatable economics
@@ -14,6 +18,5 @@ Relevant memories:
 - ## Session: run-2026-03-19T07-21-46-605Z-a7a007c3
 - On sound/vibration claims, consistently narrowed broad “healing frequencies” rhetoric into modality-specific buckets: WBV (strongest evidence), VAT/sound-based adjuncts (plausible but weaker), and 432/528 Hz or organ/chakra tuning claims (spec
 
-## Session: run-2026-03-19T09-04-01-111Z-67117f9f
-- ## Session: run-2026-03-19T[unknown]-gaming-openclaw
-- In gaming, consistently argued OpenClaw-like agents are best as constrained studio-side operators—especially sandboxed agentic QA/synthetic player rehearsal, build/test automation, bug triage, telemetry/community summarization, and live-ops/content drafting
+## Session: run-2026-03-24T02-06-40-482Z-ba77f8b7
+- For

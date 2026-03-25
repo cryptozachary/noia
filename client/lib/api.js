@@ -45,8 +45,9 @@ export const api = {
   getEvaluation: (id) => fetchJson(`/api/runs/${encodeURIComponent(id)}/evaluation`),
   runEvaluation: (id) => fetchJson(`/api/runs/${encodeURIComponent(id)}/evaluate`, { method: "POST" }),
 
-  // Cost
+  // Cost & Usage
   getCostEstimate: (params) => fetchJson(`/api/cost/estimate?${new URLSearchParams(params)}`),
+  getUsage: () => fetchJson("/api/usage"),
 
   // Templates
   getTemplates: () => fetchJson("/api/templates"),

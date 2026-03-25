@@ -162,6 +162,8 @@ class SqliteStore {
         if (parsed._researchSources && parsed._researchSources.length > 0) {
           meta.researchSourceCount = parsed._researchSources.length;
         }
+        if (parsed.metadata && parsed.metadata.tokenUsage) meta.tokenUsage = parsed.metadata.tokenUsage;
+        if (parsed.metadata && parsed.metadata.model) meta.model = parsed.metadata.model;
       } catch { /* skip */ }
       return meta;
     });
