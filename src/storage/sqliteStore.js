@@ -1,5 +1,5 @@
 const Database = require("better-sqlite3");
-const { randomUUID } = require("crypto");
+const { randomUUID, createHash } = require("crypto");
 const { AppError } = require("../utils/errors");
 
 class SqliteStore {
@@ -144,12 +144,15 @@ class SqliteStore {
     return JSON.parse(row.data);
   }
 
-  async listRuns({ page = 1, limit = 50 } = {}) {
-    const total = this.db.prepare("SELECT COUNT(*) as cnt FROM runs").get().cnt;
+  async listRuns({ page = 1, limit = 50, userId } = {}) {
+    const whereClause = userId ? " WHERE user_id = ?" : "";
+    const countParams = userId ? [userId] : [];
+    const total = this.db.prepare(`SELECT COUNT(*) as cnt FROM runs${whereClause}`).get(...countParams).cnt;
     const offset = (page - 1) * limit;
+    const queryParams = userId ? [userId, limit, offset] : [limit, offset];
     const rows = this.db.prepare(
-      "SELECT id, title, topic, status, user_id, branched_from, created_at, updated_at, data FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?"
-    ).all(limit, offset);
+      `SELECT id, title, topic, status, user_id, branched_from, created_at, updated_at, data FROM runs${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    ).all(...queryParams);
 
     const runs = rows.map((r) => {
       const meta = { id: r.id, title: r.title, topic: r.topic, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at };
@@ -375,21 +378,33 @@ class SqliteStore {
 
   async createUser({ name }) {
     const id = `user-${randomUUID().slice(0, 8)}`;
-    const apiKey = `noia-${randomUUID()}`;
-    const user = { id, name: name || "User", apiKey, createdAt: new Date().toISOString() };
+    const rawKey = `noia-${randomUUID()}`;
+    const apiKeyHash = createHash("sha256").update(rawKey).digest("hex");
+    const user = { id, name: name || "User", apiKeyHash, createdAt: new Date().toISOString() };
     this.db.prepare("INSERT INTO users (id, name, api_key, created_at) VALUES (?, ?, ?, ?)")
-      .run(user.id, user.name, user.apiKey, user.createdAt);
-    return user;
+      .run(user.id, user.name, apiKeyHash, user.createdAt);
+    // Return raw key only once — it is not stored
+    return { ...user, apiKey: rawKey };
   }
 
   async listUsers() {
-    return this.db.prepare("SELECT id, name, api_key as apiKey, created_at as createdAt FROM users").all();
+    const rows = this.db.prepare("SELECT id, name, api_key, created_at as createdAt FROM users").all();
+    return rows.map((r) => {
+      // Hashed keys are 64-char hex; legacy plaintext keys start with "noia-"
+      if (r.api_key && r.api_key.startsWith("noia-")) {
+        return { id: r.id, name: r.name, apiKey: r.api_key, createdAt: r.createdAt };
+      }
+      return { id: r.id, name: r.name, apiKeyHash: r.api_key, createdAt: r.createdAt };
+    });
   }
 
   async loadUser(userId) {
-    const row = this.db.prepare("SELECT id, name, api_key as apiKey, created_at as createdAt FROM users WHERE id = ?").get(userId);
+    const row = this.db.prepare("SELECT id, name, api_key, created_at as createdAt FROM users WHERE id = ?").get(userId);
     if (!row) throw new AppError(`User not found: ${userId}`, 404);
-    return row;
+    if (row.api_key && row.api_key.startsWith("noia-")) {
+      return { id: row.id, name: row.name, apiKey: row.api_key, createdAt: row.createdAt };
+    }
+    return { id: row.id, name: row.name, apiKeyHash: row.api_key, createdAt: row.createdAt };
   }
 
   async deleteUser(userId) {

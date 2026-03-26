@@ -1,6 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
-const { randomUUID } = require("crypto");
+const { randomUUID, createHash } = require("crypto");
 const { config } = require("../config");
 const { AppError } = require("../utils/errors");
 
@@ -128,11 +128,12 @@ class FileStore {
     return run;
   }
 
-  async listRuns({ page = 1, limit = 50 } = {}) {
+  async listRuns({ page = 1, limit = 50, userId } = {}) {
     if (!this._runIndexDirty && this._runIndexCache) {
+      const filtered = userId ? this._runIndexCache.filter((r) => r.userId === userId) : this._runIndexCache;
       const start = (page - 1) * limit;
-      const paged = this._runIndexCache.slice(start, start + limit);
-      return { runs: paged, total: this._runIndexCache.length, page, limit };
+      const paged = filtered.slice(start, start + limit);
+      return { runs: paged, total: filtered.length, page, limit };
     }
 
     const entries = await fs.readdir(this.runsDir, { withFileTypes: true });
@@ -153,9 +154,10 @@ class FileStore {
     this._runIndexCache = runs;
     this._runIndexDirty = false;
 
+    const filtered = userId ? runs.filter((r) => r.userId === userId) : runs;
     const start = (page - 1) * limit;
-    const paged = runs.slice(start, start + limit);
-    return { runs: paged, total: runs.length, page, limit };
+    const paged = filtered.slice(start, start + limit);
+    return { runs: paged, total: filtered.length, page, limit };
   }
 
   agentPath(agentId, fileName) {
@@ -391,11 +393,13 @@ class FileStore {
 
   async createUser({ name }) {
     const id = `user-${randomUUID().slice(0, 8)}`;
-    const apiKey = `noia-${randomUUID()}`;
-    const user = { id, name: name || "User", apiKey, createdAt: new Date().toISOString() };
+    const rawKey = `noia-${randomUUID()}`;
+    const apiKeyHash = createHash("sha256").update(rawKey).digest("hex");
+    const user = { id, name: name || "User", apiKeyHash, createdAt: new Date().toISOString() };
     await fs.mkdir(this.usersDir, { recursive: true });
     await this.writeJson(path.join(this.usersDir, `${id}.json`), user);
-    return user;
+    // Return raw key only once — it is not stored
+    return { ...user, apiKey: rawKey };
   }
 
   async listUsers() {

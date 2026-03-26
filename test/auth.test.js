@@ -51,7 +51,7 @@ describe("FileStore user management", () => {
     const loaded = await store.loadUser(created.id);
     assert.equal(loaded.id, created.id);
     assert.equal(loaded.name, "Charlie");
-    assert.equal(loaded.apiKey, created.apiKey);
+    assert.ok(loaded.apiKeyHash, "loaded user should have apiKeyHash");
   });
 
   it("loadUser throws 404 for missing user", async () => {

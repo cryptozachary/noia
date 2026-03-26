@@ -1,5 +1,10 @@
+const { createHash } = require("crypto");
 const { config } = require("../config");
 const { AppError } = require("../utils/errors");
+
+function hashApiKey(key) {
+  return createHash("sha256").update(key).digest("hex");
+}
 
 let userCache = null;
 
@@ -9,7 +14,12 @@ async function loadUserCache(store) {
   const users = await store.listUsers();
   const map = new Map();
   for (const user of users) {
-    if (user.apiKey) map.set(user.apiKey, user);
+    if (user.apiKeyHash) {
+      map.set(user.apiKeyHash, user);
+    } else if (user.apiKey) {
+      // Legacy: plaintext key — match by hashing the stored key
+      map.set(hashApiKey(user.apiKey), user);
+    }
   }
   userCache = map;
   return map;
@@ -27,7 +37,7 @@ function authMiddleware(store) {
       if (apiKey) {
         try {
           const cache = await loadUserCache(store);
-          const user = cache.get(apiKey);
+          const user = cache.get(hashApiKey(apiKey));
           req.user = user || null;
         } catch {
           req.user = null;
@@ -50,7 +60,7 @@ function authMiddleware(store) {
 
     try {
       const cache = await loadUserCache(store);
-      const user = cache.get(apiKey);
+      const user = cache.get(hashApiKey(apiKey));
       if (!user) {
         return next(new AppError("Invalid API key.", 403));
       }
@@ -69,4 +79,4 @@ function requireAdmin(req, _res, next) {
   next();
 }
 
-module.exports = { authMiddleware, requireAdmin, invalidateUserCache };
+module.exports = { authMiddleware, requireAdmin, invalidateUserCache, hashApiKey };

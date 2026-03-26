@@ -167,10 +167,9 @@ describe("Integration tests", () => {
     assert.equal(res.status, 404);
   });
 
-  it("DELETE /api/runs/:runId succeeds silently for missing run", async () => {
+  it("DELETE /api/runs/:runId returns 404 for missing run", async () => {
     const res = await request("DELETE", "/api/runs/nonexistent-run");
-    assert.equal(res.status, 200);
-    assert.equal(res.body.ok, true);
+    assert.equal(res.status, 404);
   });
 
   // ── Agents ──

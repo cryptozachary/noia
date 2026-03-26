@@ -17,6 +17,8 @@ const { MemoryPruner } = require("../services/memoryPruner");
 const { authMiddleware, requireAdmin, invalidateUserCache } = require("../middleware/auth");
 const { DocumentService } = require("../services/documentService");
 const multer = require("multer");
+const os = require("os");
+const path = require("path");
 
 const router = express.Router();
 
@@ -27,7 +29,10 @@ const embeddingService = new EmbeddingService({ apiKey: config.openai.apiKey, em
 const snapshotService = new SnapshotService(store);
 const memoryPruner = new MemoryPruner({ store, llmService, snapshotService, embeddingService });
 const documentService = new DocumentService({ store, embeddingService });
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({
+  dest: path.join(os.tmpdir(), "noia-uploads"),
+  limits: { fileSize: 10 * 1024 * 1024 }  // 10 MB
+});
 const orchestrator = new DiscussionOrchestrator({
   store,
   openaiService: llmService,
@@ -44,6 +49,14 @@ router.use(authMiddleware(store));
 function validatePathParam(value) {
   if (!value || /[/\\]|\.\./.test(value)) {
     throw new AppError("Invalid parameter.", 400);
+  }
+}
+
+function assertRunOwner(run, req) {
+  if (!config.requireAuth || !req.user) return;
+  if (req.user.isAdmin) return;
+  if (run.userId && run.userId !== req.user.id) {
+    throw new AppError("Not found.", 404);
   }
 }
 
@@ -97,7 +110,8 @@ router.get("/runs", async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-    const result = await store.listRuns({ page, limit });
+    const userId = config.requireAuth && req.user && !req.user.isAdmin ? req.user.id : undefined;
+    const result = await store.listRuns({ page, limit, userId });
     res.json(result);
   } catch (error) {
     next(error);
@@ -112,6 +126,8 @@ router.get("/runs/compare", async (req, res, next) => {
     validatePathParam(idA);
     validatePathParam(idB);
     const [runA, runB] = await Promise.all([store.loadRun(idA), store.loadRun(idB)]);
+    assertRunOwner(runA, req);
+    assertRunOwner(runB, req);
     let divergenceRound = null;
     if (runA.branchedFrom && runA.branchedFrom.runId === idB) {
       divergenceRound = runA.branchedFrom.round;
@@ -132,6 +148,8 @@ router.delete("/runs/:runId", async (req, res, next) => {
     if (getActiveRunIds().includes(req.params.runId)) {
       throw new AppError("Cannot delete an active run. Cancel it first.", 400);
     }
+    const run = await store.loadRun(req.params.runId);
+    assertRunOwner(run, req);
     await store.deleteRun(req.params.runId);
     res.json({ ok: true });
   } catch (error) {
@@ -143,6 +161,7 @@ router.get("/runs/:runId", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
     const run = await store.loadRun(req.params.runId);
+    assertRunOwner(run, req);
     const cost = run.metadata ? calculateCost(run.metadata.model, run.metadata.tokenUsage) : null;
     res.json({ run, cost });
   } catch (error) {
@@ -161,8 +180,9 @@ router.get("/cost/estimate", (req, res) => {
 
 router.get("/usage", async (req, res, next) => {
   try {
-    // Load all runs (unpaginated) — meta includes tokenUsage and model
-    const result = await store.listRuns({ page: 1, limit: 100000 });
+    // Load runs scoped to current user when auth is enabled
+    const userId = config.requireAuth && req.user && !req.user.isAdmin ? req.user.id : undefined;
+    const result = await store.listRuns({ page: 1, limit: 100000, userId });
     const allRuns = result.runs || [];
 
     const totals = { input_tokens: 0, output_tokens: 0, total_tokens: 0, totalCost: 0, runCount: 0 };
@@ -599,6 +619,7 @@ router.get("/runs/:runId/export/md", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
     const run = await store.loadRun(req.params.runId);
+    assertRunOwner(run, req);
     const markdown = buildMarkdownExport(run);
     res.setHeader("Content-Type", "text/markdown; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${run.id}.md"`);
@@ -612,6 +633,7 @@ router.get("/runs/:runId/export/html", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
     const run = await store.loadRun(req.params.runId);
+    assertRunOwner(run, req);
     const html = buildHtmlExport(run);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${run.id}.html"`);
@@ -630,6 +652,7 @@ router.post("/runs/:runId/branch", async (req, res, next) => {
     }
 
     const sourceRun = await store.loadRun(req.params.runId);
+    assertRunOwner(sourceRun, req);
     const maxRound = Math.max(0, ...(sourceRun.roundMessages || []).map((r) => r.round));
     if (afterRound > maxRound) {
       throw new AppError(`Round ${afterRound} does not exist in this run.`, 400);
@@ -664,6 +687,7 @@ router.post("/runs/:runId/branch", async (req, res, next) => {
 router.get("/runs/:runId/annotations", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
+    assertRunOwner(await store.loadRun(req.params.runId), req);
     const data = await store.loadAnnotations(req.params.runId);
     res.json(data);
   } catch (error) {
@@ -674,6 +698,7 @@ router.get("/runs/:runId/annotations", async (req, res, next) => {
 router.post("/runs/:runId/annotations", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
+    assertRunOwner(await store.loadRun(req.params.runId), req);
     const text = (req.body.text || "").trim();
     if (!text) throw new AppError("Annotation text is required.", 400);
 
@@ -698,6 +723,7 @@ router.post("/runs/:runId/annotations", async (req, res, next) => {
 router.delete("/runs/:runId/annotations/:annotationId", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
+    assertRunOwner(await store.loadRun(req.params.runId), req);
     const data = await store.loadAnnotations(req.params.runId);
     const before = data.annotations.length;
     data.annotations = data.annotations.filter((a) => a.id !== req.params.annotationId);
@@ -715,6 +741,7 @@ router.get("/runs/:runId/evaluation", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
     const run = await store.loadRun(req.params.runId);
+    assertRunOwner(run, req);
     const graph = (run.metadata && run.metadata.argumentGraph) || { nodes: [], edges: [] };
     const metrics = (run.metadata && run.metadata.evaluationMetrics) || null;
     res.json({ graph, metrics });
@@ -727,6 +754,7 @@ router.post("/runs/:runId/evaluate", async (req, res, next) => {
   try {
     validatePathParam(req.params.runId);
     const run = await store.loadRun(req.params.runId);
+    assertRunOwner(run, req);
     if (!run.metadata || run.metadata.status !== "completed") {
       throw new AppError("Can only evaluate completed runs.", 400);
     }
@@ -814,6 +842,7 @@ router.get("/documents", async (_req, res, next) => {
 
 router.get("/documents/:docId", async (req, res, next) => {
   try {
+    validatePathParam(req.params.docId);
     const doc = await documentService.getDocument(req.params.docId);
     res.json(doc);
   } catch (error) {
@@ -823,6 +852,7 @@ router.get("/documents/:docId", async (req, res, next) => {
 
 router.delete("/documents/:docId", async (req, res, next) => {
   try {
+    validatePathParam(req.params.docId);
     await documentService.deleteDocument(req.params.docId);
     res.json({ ok: true });
   } catch (error) {

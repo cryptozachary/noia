@@ -24,7 +24,8 @@ COPY src ./src
 COPY server.js .
 COPY data/agents ./data/agents
 
-RUN mkdir -p data/runs data/exports data/topics data/templates data/users data/documents logs
+RUN mkdir -p data/runs data/exports data/topics data/templates data/users data/documents logs \
+    && chown -R node:node data logs
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -32,8 +33,8 @@ ENV LOG_DIR=/app/logs
 
 EXPOSE 3000
 
+USER node
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))"
-
-USER node
 CMD ["node", "server.js"]

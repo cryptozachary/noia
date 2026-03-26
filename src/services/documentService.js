@@ -1,4 +1,5 @@
 const { randomUUID } = require("crypto");
+const fs = require("fs/promises");
 const pdfParse = require("pdf-parse");
 const { AppError } = require("../utils/errors");
 const { logger } = require("../utils/logger");
@@ -10,22 +11,32 @@ class DocumentService {
   }
 
   async ingestUpload(file, metadata = {}) {
-    if (!file || !file.buffer) {
+    if (!file || (!file.buffer && !file.path)) {
       throw new AppError("No file provided", 400);
     }
 
     const id = `doc-${randomUUID().slice(0, 8)}`;
     let extractedText = "";
 
+    // Read file content from disk (multer disk storage) or memory buffer
+    const buffer = file.buffer || await fs.readFile(file.path);
+
     const mimeType = file.mimetype || "";
     const filename = file.originalname || "upload";
 
-    if (mimeType === "application/pdf" || filename.endsWith(".pdf")) {
-      extractedText = await this._extractPdfText(file.buffer);
-    } else if (mimeType.startsWith("text/") || filename.endsWith(".txt") || filename.endsWith(".md")) {
-      extractedText = file.buffer.toString("utf8");
-    } else {
-      throw new AppError(`Unsupported file type: ${mimeType || filename}`, 400);
+    try {
+      if (mimeType === "application/pdf" || filename.endsWith(".pdf")) {
+        extractedText = await this._extractPdfText(buffer);
+      } else if (mimeType.startsWith("text/") || filename.endsWith(".txt") || filename.endsWith(".md")) {
+        extractedText = buffer.toString("utf8");
+      } else {
+        throw new AppError(`Unsupported file type: ${mimeType || filename}`, 400);
+      }
+    } finally {
+      // Clean up temp file from disk storage
+      if (file.path) {
+        fs.unlink(file.path).catch(() => {});
+      }
     }
 
     const doc = {
