@@ -402,4 +402,45 @@ describe("SqliteStore", () => {
   it("migrateMetaFiles is a no-op", async () => {
     await store.migrateMetaFiles(); // should not throw
   });
+
+  // ── Template ownership ──
+
+  it("saveTemplate stores userId and shared flag", async () => {
+    const tmpl = await store.saveTemplate({ name: "T1", topic: "x", userId: "user-1", shared: true });
+    const loaded = await store.loadTemplate(tmpl.id);
+    assert.equal(loaded.userId, "user-1");
+    assert.equal(loaded.shared, true);
+  });
+
+  it("listTemplates with userId shows own + shared + ownerless", async () => {
+    await store.saveTemplate({ name: "Own", topic: "x", userId: "user-1" });
+    await store.saveTemplate({ name: "Shared", topic: "x", userId: "user-2", shared: true });
+    await store.saveTemplate({ name: "Other", topic: "x", userId: "user-2" });
+    await store.saveTemplate({ name: "Legacy", topic: "x" });
+
+    const visible = await store.listTemplates({ userId: "user-1" });
+    const names = visible.map((t) => t.name).sort();
+    assert.deepStrictEqual(names, ["Legacy", "Own", "Shared"]);
+  });
+
+  it("updateTemplate updates shared flag", async () => {
+    const tmpl = await store.saveTemplate({ name: "T", topic: "x", userId: "user-1" });
+    const loaded = await store.loadTemplate(tmpl.id);
+    loaded.shared = true;
+    await store.updateTemplate(tmpl.id, loaded);
+    const updated = await store.loadTemplate(tmpl.id);
+    assert.equal(updated.shared, true);
+  });
+
+  // ── Document ownership ──
+
+  it("listDocuments with userId shows own + ownerless", async () => {
+    await store.saveDocument("doc-1", { id: "doc-1", userId: "user-1", createdAt: new Date().toISOString() });
+    await store.saveDocument("doc-2", { id: "doc-2", userId: "user-2", createdAt: new Date().toISOString() });
+    await store.saveDocument("doc-3", { id: "doc-3", createdAt: new Date().toISOString() });
+
+    const visible = await store.listDocuments({ userId: "user-1" });
+    const ids = visible.map((d) => d.id).sort();
+    assert.deepStrictEqual(ids, ["doc-1", "doc-3"]);
+  });
 });

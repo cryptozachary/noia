@@ -7,14 +7,14 @@ const { validateDiscussionRequest } = require("../services/outputValidator");
 const { AppError } = require("../utils/errors");
 const { DiscussionOrchestrator } = require("../orchestrator/discussionOrchestrator");
 const { AGENTS, getAgent, addAgent, removeAgent, DEFAULT_AGENTS } = require("../agents/registry");
-const { startRun, cancelRun, resumeRun, getPausedState, getRunEmitter, getActiveRunIds } = require("../orchestrator/runManager");
+const { startRun, cancelRun, resumeRun, getPausedState, getRunEmitter, getActiveRunIds, getActiveRunUserId } = require("../orchestrator/runManager");
 const { buildMarkdownExport, buildHtmlExport } = require("../services/exportBuilder");
 const { ResearchService } = require("../services/researchService");
 const { calculateCost, estimateRunCost, formatCost } = require("../services/costCalculator");
 const { EmbeddingService, chunkMemory, truncateEmbedding } = require("../services/embeddingService");
 const { SnapshotService } = require("../services/snapshotService");
 const { MemoryPruner } = require("../services/memoryPruner");
-const { authMiddleware, requireAdmin, invalidateUserCache } = require("../middleware/auth");
+const { authMiddleware, requireAdmin, requireAdminIfAuth, invalidateUserCache } = require("../middleware/auth");
 const { DocumentService } = require("../services/documentService");
 const multer = require("multer");
 const os = require("os");
@@ -56,6 +56,15 @@ function assertRunOwner(run, req) {
   if (!config.requireAuth || !req.user) return;
   if (req.user.isAdmin) return;
   if (run.userId && run.userId !== req.user.id) {
+    throw new AppError("Not found.", 404);
+  }
+}
+
+function assertActiveRunOwner(runId, req) {
+  if (!config.requireAuth || !req.user) return;
+  if (req.user.isAdmin) return;
+  const ownerId = getActiveRunUserId(runId);
+  if (ownerId && ownerId !== req.user.id) {
     throw new AppError("Not found.", 404);
   }
 }
@@ -283,7 +292,8 @@ router.post("/discussions", async (req, res, next) => {
       rounds: valid.rounds,
       stages: valid.stages || null,
       settings,
-      existingRun: run
+      existingRun: run,
+      userId: req.user ? req.user.id : null
     });
 
     res.status(202).json({ runId: run.id });
@@ -292,12 +302,14 @@ router.post("/discussions", async (req, res, next) => {
   }
 });
 
-router.get("/discussions/active", (_req, res) => {
-  res.json({ activeRunIds: getActiveRunIds() });
+router.get("/discussions/active", (req, res) => {
+  const userId = config.requireAuth && req.user && !req.user.isAdmin ? req.user.id : undefined;
+  res.json({ activeRunIds: getActiveRunIds(userId) });
 });
 
 router.delete("/discussions/:runId", (req, res) => {
   const { runId } = req.params;
+  assertActiveRunOwner(runId, req);
   const cancelled = cancelRun(runId);
   if (!cancelled) {
     return res.status(404).json({ error: "Run not found or already completed." });
@@ -307,6 +319,7 @@ router.delete("/discussions/:runId", (req, res) => {
 
 router.get("/discussions/:runId/stream", (req, res) => {
   const { runId } = req.params;
+  assertActiveRunOwner(runId, req);
   const emitter = getRunEmitter(runId);
 
   if (!emitter) {
@@ -408,6 +421,7 @@ router.get("/discussions/:runId/stream", (req, res) => {
 });
 
 router.post("/discussions/:runId/input", (req, res) => {
+  assertActiveRunOwner(req.params.runId, req);
   const userInput = typeof req.body.input === "string" ? req.body.input.trim() : "";
   if (!userInput) return res.status(400).json({ error: "Input text is required." });
   const resumed = resumeRun(req.params.runId, userInput);
@@ -448,7 +462,7 @@ router.get("/agents/:agentId/memory", async (req, res, next) => {
   }
 });
 
-router.put("/agents/:agentId/memory", async (req, res, next) => {
+router.put("/agents/:agentId/memory", requireAdminIfAuth, async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     const memory = typeof req.body.memory === "string" ? req.body.memory : "";
@@ -473,7 +487,7 @@ router.get("/agents/:agentId/insights", async (req, res, next) => {
   }
 });
 
-router.post("/agents/:agentId/reindex-memory", async (req, res, next) => {
+router.post("/agents/:agentId/reindex-memory", requireAdminIfAuth, async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     if (!embeddingService.isAvailable()) {
@@ -497,7 +511,7 @@ router.post("/agents/:agentId/reindex-memory", async (req, res, next) => {
   }
 });
 
-router.post("/agents/:agentId/prune-memory", async (req, res, next) => {
+router.post("/agents/:agentId/prune-memory", requireAdminIfAuth, async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     const maxSections = req.body && req.body.maxSections ? Number(req.body.maxSections) : config.memoryPrune.maxSections;
@@ -520,7 +534,7 @@ router.get("/agents/:agentId/config", async (req, res, next) => {
   }
 });
 
-router.post("/agents", async (req, res, next) => {
+router.post("/agents", requireAdminIfAuth, async (req, res, next) => {
   try {
     const name = (req.body.name || "").trim();
     if (!name) throw new AppError("Agent name is required.", 400);
@@ -556,7 +570,7 @@ router.post("/agents", async (req, res, next) => {
   }
 });
 
-router.delete("/agents/:agentId", async (req, res, next) => {
+router.delete("/agents/:agentId", requireAdminIfAuth, async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     const builtInIds = DEFAULT_AGENTS.map((a) => a.id);
@@ -570,7 +584,7 @@ router.delete("/agents/:agentId", async (req, res, next) => {
   }
 });
 
-router.put("/agents/:agentId/config", async (req, res, next) => {
+router.put("/agents/:agentId/config", requireAdminIfAuth, async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     const agentId = req.params.agentId;
@@ -583,7 +597,7 @@ router.put("/agents/:agentId/config", async (req, res, next) => {
   }
 });
 
-router.post("/agents/:agentId/snapshot", async (req, res, next) => {
+router.post("/agents/:agentId/snapshot", requireAdminIfAuth, async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     const label = req.body && typeof req.body.label === "string" ? req.body.label.trim() : undefined;
@@ -604,7 +618,7 @@ router.get("/agents/:agentId/snapshots", async (req, res, next) => {
   }
 });
 
-router.post("/agents/:agentId/restore/:snapshotId", async (req, res, next) => {
+router.post("/agents/:agentId/restore/:snapshotId", requireAdminIfAuth, async (req, res, next) => {
   try {
     validatePathParam(req.params.agentId);
     validatePathParam(req.params.snapshotId);
@@ -675,7 +689,8 @@ router.post("/runs/:runId/branch", async (req, res, next) => {
       rounds: sourceRun.rounds,
       settings: branchSettings,
       existingRun: newRun,
-      startRound: afterRound + 1
+      startRound: afterRound + 1,
+      userId: req.user ? req.user.id : null
     });
 
     res.status(202).json({ runId: newRun.id });
@@ -773,9 +788,10 @@ router.post("/runs/:runId/evaluate", async (req, res, next) => {
   }
 });
 
-router.get("/templates", async (_req, res, next) => {
+router.get("/templates", async (req, res, next) => {
   try {
-    const templates = await store.listTemplates();
+    const userId = config.requireAuth && req.user && !req.user.isAdmin ? req.user.id : undefined;
+    const templates = await store.listTemplates({ userId });
     res.json({ templates });
   } catch (error) {
     next(error);
@@ -791,9 +807,26 @@ router.post("/templates", async (req, res, next) => {
       topic: req.body.topic || "",
       rounds: req.body.rounds || 4,
       stages: req.body.stages || null,
-      settings: req.body.settings || {}
+      settings: req.body.settings || {},
+      userId: req.user ? req.user.id : null,
+      shared: req.body.shared === true
     });
     res.status(201).json({ template });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/templates/:templateId/share", async (req, res, next) => {
+  try {
+    validatePathParam(req.params.templateId);
+    const tmpl = await store.loadTemplate(req.params.templateId);
+    if (config.requireAuth && req.user && !req.user.isAdmin && tmpl.userId && tmpl.userId !== req.user.id) {
+      throw new AppError("Not found.", 404);
+    }
+    tmpl.shared = req.body.shared !== false;
+    await store.updateTemplate(req.params.templateId, tmpl);
+    res.json({ ok: true, shared: tmpl.shared });
   } catch (error) {
     next(error);
   }
@@ -802,6 +835,10 @@ router.post("/templates", async (req, res, next) => {
 router.delete("/templates/:templateId", async (req, res, next) => {
   try {
     validatePathParam(req.params.templateId);
+    const tmpl = await store.loadTemplate(req.params.templateId);
+    if (config.requireAuth && req.user && !req.user.isAdmin && tmpl.userId && tmpl.userId !== req.user.id) {
+      throw new AppError("Not found.", 404);
+    }
     await store.deleteTemplate(req.params.templateId);
     res.json({ ok: true });
   } catch (error) {
@@ -813,7 +850,7 @@ router.delete("/templates/:templateId", async (req, res, next) => {
 
 router.post("/documents/upload", upload.single("file"), async (req, res, next) => {
   try {
-    const metadata = { title: req.body?.title };
+    const metadata = { title: req.body?.title, userId: req.user ? req.user.id : null };
     const result = await documentService.ingestUpload(req.file, metadata);
     res.status(201).json(result);
   } catch (error) {
@@ -824,26 +861,36 @@ router.post("/documents/upload", upload.single("file"), async (req, res, next) =
 router.post("/documents/arxiv", async (req, res, next) => {
   try {
     const { arxivId } = req.body;
-    const result = await documentService.ingestArxiv(arxivId);
+    const result = await documentService.ingestArxiv(arxivId, { userId: req.user ? req.user.id : null });
     res.status(201).json(result);
   } catch (error) {
     next(error);
   }
 });
 
-router.get("/documents", async (_req, res, next) => {
+router.get("/documents", async (req, res, next) => {
   try {
-    const docs = await documentService.listDocuments();
+    const userId = config.requireAuth && req.user && !req.user.isAdmin ? req.user.id : undefined;
+    const docs = await documentService.listDocuments({ userId });
     res.json({ documents: docs });
   } catch (error) {
     next(error);
   }
 });
 
+function assertDocOwner(doc, req) {
+  if (!config.requireAuth || !req.user) return;
+  if (req.user.isAdmin) return;
+  if (doc.userId && doc.userId !== req.user.id) {
+    throw new AppError("Not found.", 404);
+  }
+}
+
 router.get("/documents/:docId", async (req, res, next) => {
   try {
     validatePathParam(req.params.docId);
     const doc = await documentService.getDocument(req.params.docId);
+    assertDocOwner(doc, req);
     res.json(doc);
   } catch (error) {
     next(error);
@@ -853,6 +900,8 @@ router.get("/documents/:docId", async (req, res, next) => {
 router.delete("/documents/:docId", async (req, res, next) => {
   try {
     validatePathParam(req.params.docId);
+    const doc = await documentService.getDocument(req.params.docId);
+    assertDocOwner(doc, req);
     await documentService.deleteDocument(req.params.docId);
     res.json({ ok: true });
   } catch (error) {

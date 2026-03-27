@@ -216,3 +216,104 @@ describe("requireAdmin", () => {
     assert.equal(error.statusCode, 403);
   });
 });
+
+describe("requireAdminIfAuth", () => {
+  afterEach(() => {
+    const config = require("../src/config").config;
+    config.requireAuth = false;
+  });
+
+  it("passes through when requireAuth is false regardless of user", () => {
+    const config = require("../src/config").config;
+    config.requireAuth = false;
+    const { requireAdminIfAuth } = require("../src/middleware/auth");
+    const req = { user: null };
+    let called = false;
+    requireAdminIfAuth(req, {}, () => { called = true; });
+    assert.ok(called);
+  });
+
+  it("passes when requireAuth is true and user is admin", () => {
+    const config = require("../src/config").config;
+    config.requireAuth = true;
+    const { requireAdminIfAuth } = require("../src/middleware/auth");
+    const req = { user: { id: "admin", isAdmin: true } };
+    let called = false;
+    requireAdminIfAuth(req, {}, () => { called = true; });
+    assert.ok(called);
+  });
+
+  it("returns 403 when requireAuth is true and user is not admin", () => {
+    const config = require("../src/config").config;
+    config.requireAuth = true;
+    const { requireAdminIfAuth } = require("../src/middleware/auth");
+    const req = { user: { id: "user-1", isAdmin: false } };
+    let error = null;
+    requireAdminIfAuth(req, {}, (err) => { error = err; });
+    assert.ok(error);
+    assert.equal(error.statusCode, 403);
+  });
+});
+
+describe("Template ownership (FileStore)", () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("saveTemplate stores userId and shared flag", async () => {
+    const tmpl = await store.saveTemplate({ name: "T1", topic: "x", userId: "user-1", shared: true });
+    const loaded = await store.loadTemplate(tmpl.id);
+    assert.equal(loaded.userId, "user-1");
+    assert.equal(loaded.shared, true);
+  });
+
+  it("listTemplates with userId shows own + shared + ownerless", async () => {
+    await store.saveTemplate({ name: "Own", topic: "x", userId: "user-1" });
+    await store.saveTemplate({ name: "Shared", topic: "x", userId: "user-2", shared: true });
+    await store.saveTemplate({ name: "Other", topic: "x", userId: "user-2" });
+    await store.saveTemplate({ name: "Legacy", topic: "x" });
+
+    const visible = await store.listTemplates({ userId: "user-1" });
+    const names = visible.map((t) => t.name).sort();
+    assert.deepStrictEqual(names, ["Legacy", "Own", "Shared"]);
+  });
+
+  it("listTemplates without userId shows all", async () => {
+    await store.saveTemplate({ name: "A", topic: "x", userId: "user-1" });
+    await store.saveTemplate({ name: "B", topic: "x", userId: "user-2" });
+    const all = await store.listTemplates();
+    assert.equal(all.length, 2);
+  });
+});
+
+describe("Document ownership (FileStore)", () => {
+  beforeEach(async () => {
+    await setup();
+    await fs.mkdir(path.join(tmpDir, "documents"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("listDocuments with userId shows own + ownerless", async () => {
+    await store.saveDocument("doc-1", { id: "doc-1", userId: "user-1", createdAt: new Date().toISOString() });
+    await store.saveDocument("doc-2", { id: "doc-2", userId: "user-2", createdAt: new Date().toISOString() });
+    await store.saveDocument("doc-3", { id: "doc-3", createdAt: new Date().toISOString() });
+
+    const visible = await store.listDocuments({ userId: "user-1" });
+    const ids = visible.map((d) => d.id).sort();
+    assert.deepStrictEqual(ids, ["doc-1", "doc-3"]);
+  });
+
+  it("listDocuments without userId shows all", async () => {
+    await store.saveDocument("doc-1", { id: "doc-1", userId: "user-1", createdAt: new Date().toISOString() });
+    await store.saveDocument("doc-2", { id: "doc-2", userId: "user-2", createdAt: new Date().toISOString() });
+    const all = await store.listDocuments();
+    assert.equal(all.length, 2);
+  });
+});

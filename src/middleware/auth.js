@@ -79,4 +79,16 @@ function requireAdmin(req, _res, next) {
   next();
 }
 
-module.exports = { authMiddleware, requireAdmin, invalidateUserCache, hashApiKey };
+/**
+ * Only enforces admin when requireAuth is enabled.
+ * When auth is off, passes through so single-user setups are unaffected.
+ */
+function requireAdminIfAuth(req, _res, next) {
+  if (!config.requireAuth) return next();
+  if (!req.user || !req.user.isAdmin) {
+    return next(new AppError("Admin access required.", 403));
+  }
+  next();
+}
+
+module.exports = { authMiddleware, requireAdmin, requireAdminIfAuth, invalidateUserCache, hashApiKey };

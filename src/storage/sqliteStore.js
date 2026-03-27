@@ -51,6 +51,8 @@ class SqliteStore {
       CREATE TABLE IF NOT EXISTS templates (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        user_id TEXT,
+        shared INTEGER DEFAULT 0,
         data TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
@@ -80,6 +82,7 @@ class SqliteStore {
 
       CREATE TABLE IF NOT EXISTS documents (
         id TEXT PRIMARY KEY,
+        user_id TEXT,
         data TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
@@ -280,7 +283,8 @@ class SqliteStore {
       topic: source.topic,
       title: source.title ? `${source.title} (branch)` : source.title,
       rounds: source.rounds,
-      settings: source.settings || {}
+      settings: source.settings || {},
+      userId: source.userId || undefined
     });
     newRun.roundMessages = (source.roundMessages || []).filter((r) => r.round <= afterRound);
     newRun.branchedFrom = { runId: sourceRunId, round: afterRound };
@@ -297,8 +301,16 @@ class SqliteStore {
 
   // ── Templates ──
 
-  async listTemplates() {
-    const rows = this.db.prepare("SELECT data FROM templates ORDER BY created_at DESC").all();
+  async listTemplates({ userId } = {}) {
+    let rows;
+    if (userId) {
+      // Show: own templates + shared templates + ownerless (legacy/admin) templates
+      rows = this.db.prepare(
+        "SELECT data FROM templates WHERE user_id = ? OR shared = 1 OR user_id IS NULL ORDER BY created_at DESC"
+      ).all(userId);
+    } else {
+      rows = this.db.prepare("SELECT data FROM templates ORDER BY created_at DESC").all();
+    }
     return rows.map((r) => JSON.parse(r.data));
   }
 
@@ -308,16 +320,23 @@ class SqliteStore {
     return JSON.parse(row.data);
   }
 
-  async saveTemplate({ name, topic, rounds, stages, settings }) {
+  async saveTemplate({ name, topic, rounds, stages, settings, userId, shared }) {
     const id = `tmpl-${randomUUID().slice(0, 8)}`;
     const data = {
       id, name: name || "Untitled", topic: topic || "", rounds: rounds || 4,
       stages: stages || null, settings: settings || {},
       createdAt: new Date().toISOString()
     };
-    this.db.prepare("INSERT INTO templates (id, name, data, created_at) VALUES (?, ?, ?, ?)")
-      .run(id, data.name, JSON.stringify(data), data.createdAt);
+    if (userId) data.userId = userId;
+    if (shared) data.shared = true;
+    this.db.prepare("INSERT INTO templates (id, name, user_id, shared, data, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, data.name, userId || null, shared ? 1 : 0, JSON.stringify(data), data.createdAt);
     return data;
+  }
+
+  async updateTemplate(templateId, data) {
+    this.db.prepare("UPDATE templates SET data = ?, shared = ? WHERE id = ?")
+      .run(JSON.stringify(data), data.shared ? 1 : 0, templateId);
   }
 
   async deleteTemplate(templateId) {
@@ -414,8 +433,8 @@ class SqliteStore {
   // ── Documents ──
 
   async saveDocument(docId, data) {
-    this.db.prepare("INSERT OR REPLACE INTO documents (id, data, created_at) VALUES (?, ?, ?)")
-      .run(docId, JSON.stringify(data), data.createdAt || new Date().toISOString());
+    this.db.prepare("INSERT OR REPLACE INTO documents (id, user_id, data, created_at) VALUES (?, ?, ?, ?)")
+      .run(docId, data.userId || null, JSON.stringify(data), data.createdAt || new Date().toISOString());
   }
 
   async loadDocument(docId) {
@@ -424,8 +443,15 @@ class SqliteStore {
     return JSON.parse(row.data);
   }
 
-  async listDocuments() {
-    const rows = this.db.prepare("SELECT data FROM documents ORDER BY created_at DESC").all();
+  async listDocuments({ userId } = {}) {
+    let rows;
+    if (userId) {
+      rows = this.db.prepare(
+        "SELECT data FROM documents WHERE user_id = ? OR user_id IS NULL ORDER BY created_at DESC"
+      ).all(userId);
+    } else {
+      rows = this.db.prepare("SELECT data FROM documents ORDER BY created_at DESC").all();
+    }
     return rows.map((r) => JSON.parse(r.data));
   }
 

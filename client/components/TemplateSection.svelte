@@ -14,6 +14,7 @@
   const dispatch = createEventDispatcher();
 
   let selectedId = "";
+  $: selectedTmpl = $templates.find((t) => t.id === selectedId) || null;
   $: showDelete = selectedId !== "";
 
   async function onSave() {
@@ -55,6 +56,18 @@
     }
   }
 
+  async function onToggleShare() {
+    if (!selectedTmpl) return;
+    const newShared = !selectedTmpl.shared;
+    try {
+      await api.shareTemplate(selectedId, newShared);
+      addToast(newShared ? "Template shared with all users." : "Template unshared.");
+      await refreshTemplates();
+    } catch (error) {
+      addToast(error.message || "Failed to update sharing.", "error");
+    }
+  }
+
   async function refreshTemplates() {
     try {
       const data = await api.getTemplates();
@@ -71,10 +84,15 @@
   <select bind:value={selectedId} on:change={onChange}>
     <option value="">-- Load Template --</option>
     {#each $templates as tmpl (tmpl.id)}
-      <option value={tmpl.id}>{tmpl.name}</option>
+      <option value={tmpl.id}>{tmpl.shared ? "[Shared] " : ""}{tmpl.name}</option>
     {/each}
   </select>
   {#if showDelete}
-    <button type="button" class="delete-template-btn" on:click={onDelete}>Delete</button>
+    <div class="template-actions">
+      <button type="button" class="share-template-btn" on:click={onToggleShare} title={selectedTmpl?.shared ? "Stop sharing" : "Share with all users"}>
+        {selectedTmpl?.shared ? "Unshare" : "Share"}
+      </button>
+      <button type="button" class="delete-template-btn" on:click={onDelete}>Delete</button>
+    </div>
   {/if}
 </div>

@@ -49,6 +49,7 @@ class DocumentService {
       chunks: [],
       createdAt: new Date().toISOString()
     };
+    if (metadata.userId) doc.userId = metadata.userId;
 
     if (this.embeddingService && extractedText.length > 0) {
       try {
@@ -62,7 +63,7 @@ class DocumentService {
     return { id: doc.id, filename: doc.filename, title: doc.title, textLength: doc.textLength, chunksCount: doc.chunks.length, createdAt: doc.createdAt };
   }
 
-  async ingestArxiv(arxivId) {
+  async ingestArxiv(arxivId, { userId } = {}) {
     if (!arxivId || typeof arxivId !== "string") {
       throw new AppError("Invalid arXiv ID", 400);
     }
@@ -96,6 +97,7 @@ class DocumentService {
       chunks: [],
       createdAt: new Date().toISOString()
     };
+    if (userId) doc.userId = userId;
 
     if (this.embeddingService && extractedText.length > 0) {
       try {
@@ -113,8 +115,8 @@ class DocumentService {
     return await this.store.loadDocument(docId);
   }
 
-  async listDocuments() {
-    const docs = await this.store.listDocuments();
+  async listDocuments({ userId } = {}) {
+    const docs = await this.store.listDocuments({ userId });
     return docs.map((d) => ({
       id: d.id,
       filename: d.filename,
@@ -122,7 +124,8 @@ class DocumentService {
       title: d.title,
       textLength: d.textLength,
       chunksCount: (d.chunks || []).length,
-      createdAt: d.createdAt
+      createdAt: d.createdAt,
+      userId: d.userId || null
     }));
   }
 

@@ -714,6 +714,12 @@ hr {
   font-size: 0.78rem;
 }
 
+.template-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
 .delete-template-btn {
   width: auto;
   padding: 2px 8px;
@@ -721,11 +727,26 @@ hr {
   color: #b91c1c;
   border-color: #b91c1c;
   background: transparent;
-  margin-top: 4px;
 }
 
 .delete-template-btn:hover {
   background: #b91c1c;
+  color: #fff;
+}
+
+.share-template-btn {
+  width: auto;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.share-template-btn:hover {
+  background: var(--accent);
   color: #fff;
 }
 

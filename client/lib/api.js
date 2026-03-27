@@ -53,6 +53,7 @@ export const api = {
   getTemplates: () => fetchJson("/api/templates"),
   saveTemplate: (body) => fetchJson("/api/templates", { method: "POST", body: JSON.stringify(body) }),
   deleteTemplate: (id) => fetchJson(`/api/templates/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  shareTemplate: (id, shared) => fetchJson(`/api/templates/${encodeURIComponent(id)}/share`, { method: "PUT", body: JSON.stringify({ shared }) }),
 
   // Documents
   getDocuments: () => fetchJson("/api/documents"),

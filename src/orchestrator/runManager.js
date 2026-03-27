@@ -32,6 +32,7 @@ function startRun(runId, orchestrator, params) {
   activeRuns.set(runId, {
     emitter,
     promise,
+    userId: params.userId || null,
     isPaused: false,
     pausedAfterRound: null,
     cancel() {
@@ -79,8 +80,16 @@ function getPausedState(runId) {
   return { isPaused: entry.isPaused, pausedAfterRound: entry.pausedAfterRound };
 }
 
-function getActiveRunIds() {
-  return [...activeRuns.keys()];
+function getActiveRunIds(userId) {
+  if (!userId) return [...activeRuns.keys()];
+  return [...activeRuns.entries()]
+    .filter(([, entry]) => entry.userId === userId)
+    .map(([id]) => id);
+}
+
+function getActiveRunUserId(runId) {
+  const entry = activeRuns.get(runId);
+  return entry ? entry.userId : null;
 }
 
 function shutdownAll() {
@@ -90,4 +99,4 @@ function shutdownAll() {
   }
 }
 
-module.exports = { startRun, cancelRun, resumeRun, setPaused, getPausedState, getRunEmitter, getActiveRunIds, shutdownAll };
+module.exports = { startRun, cancelRun, resumeRun, setPaused, getPausedState, getRunEmitter, getActiveRunIds, getActiveRunUserId, shutdownAll };

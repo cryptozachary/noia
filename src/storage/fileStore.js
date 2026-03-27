@@ -271,7 +271,8 @@ class FileStore {
       topic: source.topic,
       title: source.title ? `${source.title} (branch)` : source.title,
       rounds: source.rounds,
-      settings: source.settings || {}
+      settings: source.settings || {},
+      userId: source.userId || undefined
     });
     newRun.roundMessages = (source.roundMessages || []).filter((r) => r.round <= afterRound);
     newRun.branchedFrom = { runId: sourceRunId, round: afterRound };
@@ -285,7 +286,7 @@ class FileStore {
     return filePath;
   }
 
-  async listTemplates() {
+  async listTemplates({ userId } = {}) {
     try {
       const entries = await fs.readdir(this.templatesDir, { withFileTypes: true });
       const templates = [];
@@ -297,6 +298,10 @@ class FileStore {
         } catch { /* skip malformed */ }
       }
       templates.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (userId) {
+        // Show: own templates + shared templates + ownerless (legacy/admin) templates
+        return templates.filter((t) => !t.userId || t.userId === userId || t.shared);
+      }
       return templates;
     } catch {
       return [];
@@ -309,7 +314,7 @@ class FileStore {
     return tmpl;
   }
 
-  async saveTemplate({ name, topic, rounds, stages, settings }) {
+  async saveTemplate({ name, topic, rounds, stages, settings, userId, shared }) {
     const id = `tmpl-${randomUUID().slice(0, 8)}`;
     const data = {
       id,
@@ -320,8 +325,14 @@ class FileStore {
       settings: settings || {},
       createdAt: new Date().toISOString()
     };
+    if (userId) data.userId = userId;
+    if (shared) data.shared = true;
     await this.writeJson(path.join(this.templatesDir, `${id}.json`), data);
     return data;
+  }
+
+  async updateTemplate(templateId, data) {
+    await this.writeJson(path.join(this.templatesDir, `${templateId}.json`), data);
   }
 
   async deleteTemplate(templateId) {
@@ -442,7 +453,7 @@ class FileStore {
     return doc;
   }
 
-  async listDocuments() {
+  async listDocuments({ userId } = {}) {
     try {
       const entries = await fs.readdir(this.documentsDir, { withFileTypes: true });
       const docs = [];
@@ -454,6 +465,9 @@ class FileStore {
         } catch { /* skip */ }
       }
       docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      if (userId) {
+        return docs.filter((d) => !d.userId || d.userId === userId);
+      }
       return docs;
     } catch {
       return [];
