@@ -226,4 +226,6 @@ npm test              # All 263 tests (unit + integration)
 
 ## License
 
-MIT
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE).
+
+If you run a modified version of this software as a network service, you must make the source of your modifications available to users of that service. For commercial licensing without AGPL obligations, contact the copyright holder.
